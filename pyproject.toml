@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stockanalysis-screener"
+version = "0.1.0"
+description = "Stock analysis screener backend using FastAPI and PostgreSQL"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Steffy" }
+]
+
+dependencies = [
+  "fastapi[all]~=0.115.0",
+  "uvicorn[standard]~=0.30.0",
+  "SQLAlchemy~=2.0.0",
+  "asyncpg~=0.29.0",
+  "alembic~=1.13.0",
+  "pydantic~=2.9.0",
+  "python-dotenv~=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "httpx",
+  "ruff",
+  "black",
+  "mypy",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
