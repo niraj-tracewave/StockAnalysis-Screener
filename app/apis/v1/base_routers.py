@@ -1,7 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import stocks
-
+from app.apis.v1.routers import stocks
 
 api_router = APIRouter()
 

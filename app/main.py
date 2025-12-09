@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1.router import api_router
+from app.apis.v1.base_routers import  api_router
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging, logger
 
@@ -24,7 +24,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/apis/v1")
 
 
 @app.get("/health", tags=["health"])
