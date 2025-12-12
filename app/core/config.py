@@ -11,9 +11,14 @@ class Settings(BaseSettings):
     # Database
     postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "stock_screener"
+    postgres_db: str = "stock_announcement"
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
+    otp_valid_window: str = "60"
+    is_production: bool = True
+    access_token_expire_minutes: str = 60
+    refresh_token_expire_days: str = 30
+    secret_key: str
 
     @property
     def database_url(self) -> str:
