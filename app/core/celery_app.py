@@ -1,4 +1,3 @@
-# from celery import Celery
 from celery import Celery
 
 celery_app = Celery(
@@ -14,3 +13,5 @@ celery_app.conf.update(
     timezone="Asia/Kolkata",
     enable_utc=True,
 )
+
+celery_app.autodiscover_tasks(["app.tasks"])

@@ -1,8 +1,7 @@
-from fastapi import Depends
-from sqlalchemy.orm import Session
-
-from app.apis.deps import get_db as db, get_db
+from app.db.postgres.sync_session import SessionLocalSync
 from app.apis.models.company import Company
+from sqlalchemy.dialects.postgresql import insert
+
 from app.core.celery_app import celery_app
 
 
@@ -11,13 +10,11 @@ from app.core.celery_app import celery_app
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 5},
 )
-def store_company_data(nse_list: list, bse_list: list):
+def store_company_data(nse_list : list, bse_list : list):
     """
     Background task to store NSE & BSE company data
     """
-    from sqlalchemy.dialects.postgresql import insert
-    db =  Depends(get_db)
-    print(db)
+    db = SessionLocalSync()
     try:
         companies = []
 
@@ -26,6 +23,7 @@ def store_company_data(nse_list: list, bse_list: list):
                 "company_name": item["company_name"],
                 "symbol": item["symbol"],
                 "platform": "NSE",
+                "url": item["url"],
             })
 
         for item in bse_list:
@@ -33,18 +31,16 @@ def store_company_data(nse_list: list, bse_list: list):
                 "company_name": item["company_name"],
                 "symbol": item["symbol"],
                 "platform": "BSE",
+                "url": item["url"],
             })
 
-        print(companies, "cccccc")
+        stmt = insert(Company).values(companies)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["symbol", "platform"]
+        )
 
-
-        # stmt = insert(Company).values(companies)
-        # stmt = stmt.on_conflict_do_nothing(
-        #     index_elements=["symbol", "platform"]
-        # )
-        #
-        # db.execute(stmt)
-        # db.commit()
+        db.execute(stmt)
+        db.commit()
 
     except Exception:
         db.rollback()
