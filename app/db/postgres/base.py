@@ -1,3 +1,6 @@
+from typing import Optional, List, Dict, Any
+
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import DeclarativeBase, declared_attr, load_only
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -80,6 +83,41 @@ class BaseDBOperations:
             await self.db.delete(instance)
             await self.db.commit()
             return True
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail={"error": [str(e)]}
+            )
+
+    async def bulk_insert(
+            self,
+            data:  List[Dict[str, Any]],
+            conflict_fields: Optional[List[str]] = None
+    ) -> int:
+        """
+        Bulk insert records.
+        If conflict_fields provided -> ON CONFLICT DO NOTHING
+
+        Returns: number of inserted rows
+        """
+
+        if not data:
+            return 0
+
+        try:
+            stmt = insert(self.model).values(data)
+
+            if conflict_fields:
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=conflict_fields
+                )
+
+            result = await self.db.execute(stmt)
+            await self.db.commit()
+
+            return result.rowcount or 0
 
         except SQLAlchemyError as e:
             await self.db.rollback()
