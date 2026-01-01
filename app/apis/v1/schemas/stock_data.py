@@ -1,5 +1,8 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
 class SearchCompanyStockSchema(BaseModel):
-    search : str
+    symbol: Optional[str] = None
+    scrip: Optional[str] = None

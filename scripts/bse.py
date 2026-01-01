@@ -69,6 +69,18 @@ class RawBSEClient:
                 "seriesid": "",
             }),
 
+            "scriptHeader": ("getScripHeaderData/w", {
+                "Debtflag": "",
+                "scripcode": scripcode,
+                "seriesid": "",
+            }),
+
+            "stockTrading": ("StockTrading/w", {
+                "flag": "",
+                "quotetype": "EQ",
+                "scripcode":501831,
+            }),
+
             "priceGraph": ("StockReachGraph/w", {
                 "scripcode": scripcode,
                 "flag": "0",
@@ -127,21 +139,11 @@ class RawBSEClient:
 
 # ---------------------- Runner ----------------------
 
-async def main():
+async def main(scrip):
     client = RawBSEClient()
     await client.init()
 
-    scrip = "501831"  # COASTCORP
     data = await client.fetch_all(scrip)
 
-    filename = f"BSE_{scrip}_RAW.json"
-    with open(filename, "w") as f:
-        f.write(ujson.dumps(data, indent=4))
-
-    print(f"\n🔥 RAW BSE JSON SAVED → {filename}\n")
-
     await client.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return data

@@ -165,18 +165,11 @@ class FastNSEClient:
 
 
 
-async def main():
+async def main(symbol):
     c = FastNSEClient()
     await c.init()
 
-    data = await c.full("COASTCORP")
-
-    filename = "COASTCORP_full_async.json"
-    with open(filename, "w") as f:
-        f.write(ujson.dumps(data, indent=4))
-
+    data = await c.full(symbol)
 
     await c.close()
-    
-if __name__ == "__main__":
-    asyncio.run(main())
+    return data
