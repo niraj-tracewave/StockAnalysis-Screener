@@ -10,3 +10,7 @@ router = APIRouter()
 @router.post("/fetch-company-data", status_code=status.HTTP_200_OK)
 async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
     return await CompanyStockFetchService.company_search(request, db)
+
+@router.post("/fetch-company-stock-price-graph", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.stock_price_chart(request, db)

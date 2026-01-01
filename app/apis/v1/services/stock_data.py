@@ -98,3 +98,20 @@ class CompanyStockFetchService:
             message="Company stock data fetched successfully.",
             data={"data": []}
         )
+
+    @staticmethod
+    async def stock_price_chart(search_request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+        symbol = search_request.symbol
+        scrip = search_request.scrip
+        if scrip and symbol:
+           pass
+        elif symbol:
+           pass
+        elif scrip:
+            pass
+
+        return CustomJSONResponse(
+            success=True,
+            message="Company stock price data fetched successfully.",
+            data={"data": []}
+        )

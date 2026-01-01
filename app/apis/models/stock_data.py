@@ -82,25 +82,25 @@ class KeyDetailsForCS(Base):
         back_populates="details"
     )
 
-# class ChartDataset(Base):
-#     __tablename__ = "chart_datasets"
-#
-#     id = Column(Integer, primary_key=True, index=True)
-#
-#     company_id = Column(
-#         Integer,
-#         ForeignKey("company_stocks.id", ondelete="CASCADE"),
-#         nullable=False,
-#         index=True
-#     )
-#
-#     metric = Column(String(100), nullable=False)
-#     label = Column(String(150), nullable=True)
-#
-#     values = Column(JSONB, nullable=False)
-#     meta = Column(JSONB, nullable=True)
-#
-#     company = relationship(
-#         "CompanyStock",
-#         back_populates="charts"
-#     )
+class ChartDataset(Base):
+    __tablename__ = "chart_datasets"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    company_id = Column(
+        Integer,
+        ForeignKey("company_stock.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    metric = Column(String(100), nullable=False)
+    label = Column(String(150), nullable=True)
+
+    values = Column(JSONB, nullable=False)
+    meta = Column(JSONB, nullable=True)
+
+    company = relationship(
+        "CompanyStock",
+        back_populates="charts"
+    )
