@@ -1,13 +1,18 @@
+import json
+from datetime import datetime
+
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.apis.deps import get_db
-from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS
+from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.custom_response import CustomJSONResponse
 from app.db.postgres.base import BaseDBOperations
 from scripts.nse import main
 from scripts.bse import main as main_bse
+from scripts.nse_stock_price_graph import main_fetch_stock_price_for_graph
+from scripts.bse_stock_price_graph import main_fetch_stock_price_for_bse_graph
 
 
 class CompanyStockFetchService:
@@ -103,12 +108,54 @@ class CompanyStockFetchService:
     async def stock_price_chart(search_request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
         symbol = search_request.symbol
         scrip = search_request.scrip
+
+        company_stock_ops = BaseDBOperations(db, CompanyStock)
+        fields = ["id"]
+
+        attrs = [getattr(CompanyStock, f) for f in fields]
+        days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
         if scrip and symbol:
-           pass
+            company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                attrs, nse_symbol=symbol, bse_code=scrip
+            )
+            for days in days_list:
+                nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                chart = nse_data.get('chart')
+                company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                    {'metric': "Price", 'label': "Price on NSE", "meta": {}, "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
         elif symbol:
-           pass
+            company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                attrs, nse_symbol=symbol
+            )
+            for days in days_list:
+                nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                chart = nse_data.get('chart')
+                company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                    {'metric': "Price", 'label': "Price on NSE", "meta": {}, "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
         elif scrip:
-            pass
+            days_list = ["1M", "1Y", "5Y", "10Y"]
+            company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                attrs, bse_code=scrip
+            )
+            for days in days_list:
+                bse_data = await main_fetch_stock_price_for_bse_graph(scrip, days)
+                script_header = bse_data.get('scriptHeader')
+                data_list = json.loads(script_header.get("Data"))
+                result = []
+
+                for item in data_list:
+                    ts_ms = int(
+                        datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
+                    )
+                    price = float(item["vale1"])
+                    result.append([ts_ms, price])
+
+                company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                    {'metric': "Price", 'label': "Price on BSE", "meta": {}, "values": result,
+                     "company_id": company_stock_data_db.id})
 
         return CustomJSONResponse(
             success=True,

@@ -47,6 +47,12 @@ class CompanyStock(Base):
         uselist=False
     )
 
+    charts = relationship(
+        "ChartDataset",
+        back_populates="company",
+        cascade="all, delete-orphan"
+    )
+
 
 class KeyDetailsForCS(Base):
     __tablename__ = "key_details_for_cs"

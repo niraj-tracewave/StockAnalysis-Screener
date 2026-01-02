@@ -1,8 +1,8 @@
 """Added ChartDataSet table
 
-Revision ID: 31c1884f8404
+Revision ID: 02365045f7c6
 Revises: 0bf63e728631
-Create Date: 2026-01-01 18:20:45.605913
+Create Date: 2026-01-02 12:32:46.107161
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '31c1884f8404'
+revision: str = '02365045f7c6'
 down_revision: Union[str, Sequence[str], None] = '0bf63e728631'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
