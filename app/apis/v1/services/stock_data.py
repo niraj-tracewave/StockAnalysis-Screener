@@ -408,7 +408,7 @@ class CompanyStockFetchService:
 
         return CustomJSONResponse(
             success=True,
-            message="Company stock ratio data fetched successfully.",
+            message="Listed Company list fetched successfully.",
             data={
             "page": page,
             "page_size": page_size,
