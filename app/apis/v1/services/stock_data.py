@@ -113,7 +113,7 @@ class CompanyStockFetchService:
 
         key_company_stock_detail_ops = BaseDBOperations(db, KeyDetailsForCS)
         await key_company_stock_detail_ops.create({'market_cap': market_cap_cr, 'current_price': current_price,
-                                        "pe_ratio": float(pe_ratio), "face_value": face_value, "high_price": float(high_price),
+                                        "pe_ratio": float(pe_ratio) if pe_ratio and pe_ratio != '-' else None, "face_value": face_value, "high_price": float(high_price),
                                         "low_price": float(low_price), "book_value": None, "dividend_yield": None,
                                         "roce": None, "roe": float(roe) if roe and roe != '-' else None, "company_id": company_stock_data_db.id})
 
