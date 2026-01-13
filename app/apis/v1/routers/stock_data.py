@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from starlette import status
 
@@ -14,3 +14,37 @@ async def search_company(request: SearchCompanyStockSchema, db: Session = Depend
 @router.post("/fetch-company-stock-price-graph", status_code=status.HTTP_200_OK)
 async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
     return await CompanyStockFetchService.stock_price_chart(request, db)
+
+@router.post("/fetch-company-peer-data", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_peer_data(request, db)
+
+@router.post("/fetch-company-quarterly-result", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_quarterly_result(request, db)
+
+
+@router.post("/fetch-company-profit-loss", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_profit_loss(request, db)
+
+@router.post("/fetch-company-balance-sheet", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_balance_sheet(request, db)
+
+@router.post("/fetch-company-cash-flows", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_cash_flows(request, db)
+
+@router.post("/fetch-company-ratio", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_ratios(request, db)
+
+@router.post("/fetch-company-shareholding-pattern", status_code=status.HTTP_200_OK)
+async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_company_shareholding_pattern(request, db)
+
+@router.post("/list-of-listed-companies", status_code=status.HTTP_200_OK)
+async def search_company( page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=500),db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_listed_companies(page, page_size, db)
