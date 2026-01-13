@@ -44,7 +44,11 @@ async def search_company(request: SearchCompanyStockSchema, db: Session = Depend
 async def search_company(request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
     return await CompanyStockFetchService.fetch_company_shareholding_pattern(request, db)
 
-@router.post("/list-of-listed-companies", status_code=status.HTTP_200_OK)
+@router.get("/list-of-listed-companies", status_code=status.HTTP_200_OK)
 async def search_company( page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=500),db: Session = Depends(get_db)):
     return await CompanyStockFetchService.fetch_listed_companies(page, page_size, db)
+
+@router.get("/list-of-listed-company-detail/{symbol}/", status_code=status.HTTP_200_OK)
+async def search_company( symbol: str,db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_listed_company_detail(symbol, db)

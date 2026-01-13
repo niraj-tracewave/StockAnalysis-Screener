@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from fastapi import Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.apis.deps import get_db
@@ -416,4 +416,88 @@ class CompanyStockFetchService:
             "total_pages": (total + page_size - 1) // page_size,
             "data": response
         }
+        )
+
+    @staticmethod
+    async def fetch_listed_company_detail(
+            symbol,
+            db: Session = Depends(get_db)
+    ):
+
+        stmt = (
+            select(CompanyStock)
+            .options(selectinload(CompanyStock.details))
+            .options(selectinload(CompanyStock.charts))
+            .where(
+                or_(
+                    CompanyStock.nse_symbol == symbol,
+                    CompanyStock.bse_code == symbol
+                )
+            )
+        )
+
+        result = await db.execute(stmt)
+        company = result.scalars().first()
+
+        if not company:
+            return CustomJSONResponse(
+                success=False,
+                message="Company not found",
+                data=None
+            )
+
+        details = company.details
+
+        one_month_charts = [
+            {
+                "metric": chart.metric,
+                "label": chart.label,
+                "values": chart.values,
+                "meta": chart.meta,
+            }
+            for chart in company.charts
+            if chart.meta and chart.meta.get("days") == "1M"
+        ]
+
+        response = {
+            "id": company.id,
+            "name": company.name,
+            "website": company.website,
+            "bse_code": company.bse_code,
+            "nse_symbol": company.nse_symbol,
+            "macro_economic_sector": company.macro_economic_sector,
+            "sector": company.sector,
+            "industry": company.industry,
+            "basic_industry": company.basic_industry,
+
+            "key_details": {
+                "market_cap": details.market_cap if details else None,
+                "current_price": details.current_price if details else None,
+                "high_price": details.high_price if details else None,
+                "low_price": details.low_price if details else None,
+                "pe_ratio": details.pe_ratio if details else None,
+                "book_value": details.book_value if details else None,
+                "dividend_yield": details.dividend_yield if details else None,
+                "roce": details.roce if details else None,
+                "roe": details.roe if details else None,
+                "face_value": details.face_value if details else None,
+                "about": details.about if details else None,
+                "key_points": details.key_points if details else None,
+                "pros": details.pros if details else None,
+                "cons": details.cons if details else None,
+            } if details else None,
+
+            "chart": one_month_charts,
+            "quarterly_result": quarterly_result,
+            "profit_loss": profit_loss,
+            "balance_sheet": balance_sheet,
+            "cash_flow": cash_flow,
+            "ratios": ratios,
+            "share_holding_pattern": share_holding_pattern
+        }
+
+        return CustomJSONResponse(
+            success=True,
+            message="Company detail fetched successfully",
+            data=response
         )
