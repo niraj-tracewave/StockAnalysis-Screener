@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     postgres_password: str = "postgres"
     otp_valid_window: str = "60"
     is_production: bool = True
-    access_token_expire_minutes: str = 60
-    refresh_token_expire_days: str = 30
-    secret_key: str
+    access_token_expire_minutes: str = '60'
+    refresh_token_expire_days: str = '30'
+    secret_key: str = "jhsgdjsgdjgshgdfsdkljlkjdfjklfsdkf"
 
     @property
     def database_url(self) -> str:

@@ -23,6 +23,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 from app.apis.models.users import User
 from app.apis.models.company import Company
+from app.apis.models.stock_data import CompanyStock
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
