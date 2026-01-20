@@ -1,4 +1,8 @@
 # app/core/event_loop.py
 import asyncio
 
-event_loop: asyncio.AbstractEventLoop | None = None
+class LoopStore:
+    def __init__(self):
+        self.event_loop: asyncio.AbstractEventLoop | None = None
+
+loop_store = LoopStore()

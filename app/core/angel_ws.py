@@ -96,8 +96,9 @@ import threading
 import websocket
 import asyncio
 
-from app.core.event_loop import event_loop as loop_store
+from app.core.event_loop import loop_store
 from app.apis.v1.websockets.manager import manager
+from app.db.redis.redis import redis_client
 
 
 class AngelWSClient:
@@ -107,6 +108,24 @@ class AngelWSClient:
         self.api_key = api_key
         self.ws = None
 
+    def subscribe_all(self):
+        from app.core.market_bridge import build_token_list
+
+        if not self.ws or not self.ws.sock or not self.ws.sock.connected:
+            return
+
+        req = {
+            "correlationID": "batch_sub",
+            "action": 1,
+            "params": {
+                "mode": 3,
+                "tokenList": build_token_list(),
+            },
+        }
+
+        self.ws.send(json.dumps(req))
+        print("✅ Angel batch subscribed")
+
     def connect(self):
         url = (
             "wss://smartapisocket.angelone.in/smart-stream"
@@ -114,14 +133,13 @@ class AngelWSClient:
             f"&token={self.access_token}"
             f"&api_key={self.api_key}"
         )
-        print(url, "---")
 
         headers = {
                         "Content-Type": "application/json",
                         "Authorization": f"Bearer {self.access_token}",
                         "x-api-key": self.api_key,
                         "x-client-code": self.client_id,
-                        "x-feed-token": "eyJhbGciOiJIUzUxMiJ9.eyJ1c2VybmFtZSI6IkQ0NjI0NDkiLCJpYXQiOjE3Njg3OTgyMzIsImV4cCI6MTc2ODg4NDYzMn0.47JZnfAiNalp7iUlcU4OTjW7Ot77BGOlinaCEQbsNF-cHDpZaxIdKy6RXOyW5qKh2QWXD8pBC8VuzjsZpS2nKg"
+                        "x-feed-token": "eyJhbGciOiJIUzUxMiJ9.eyJ1c2VybmFtZSI6IkQ0NjI0NDkiLCJpYXQiOjE3Njg4ODk3NTAsImV4cCI6MTc2ODk3NjE1MH0.m4YJj6YWlOELYFWKlP2IC-SHY4HqzkpUmoDqRdnuYX8tgMMRzKipRIqjfLMIQ5FgUtSCciGF9mTHdFjOhbO_Eg"
                     }
 
         self.ws = websocket.WebSocketApp(
@@ -134,11 +152,16 @@ class AngelWSClient:
 
         threading.Thread(
             target=self.ws.run_forever,
+            kwargs={
+                "ping_interval": 25,
+                "ping_timeout": 10,
+            },
             daemon=True
         ).start()
 
     def on_open(self, ws):
         print("✅ Angel WebSocket Connected")
+        self.subscribe_all()
 
     def on_close(self, ws, code, reason):
         print("❌ Angel WebSocket Closed:", reason)
@@ -157,11 +180,14 @@ class AngelWSClient:
                 "low": unpacked[10] / 100,
                 "close": unpacked[11] / 100,
             }
-            print(data, "--------")
+            redis_client.set(
+                f"last_tick:{token}",
+                json.dumps(data)
+            )
             if loop_store.event_loop:
-                loop_store.event_loop.call_soon_threadsafe(
-                    asyncio.create_task,
-                    manager.broadcast(data)
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast(data),
+                    loop_store.event_loop
                 )
 
         except Exception as e:
