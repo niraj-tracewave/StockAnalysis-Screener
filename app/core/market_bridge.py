@@ -12,7 +12,8 @@ from app.apis.v1.websockets.manager import manager
 #
 # # angel.connect()
 
-from app.core.angel_container import angel
+# from app.core.angel_container import angel
+from app.core.angel_container import angel_container
 
 
 def on_tick(symbol, data):
@@ -24,6 +25,9 @@ def on_tick(symbol, data):
 ANGEL_SYMBOLS = [
     {"exchangeType": 3, "token": "99919000"},
     {"exchangeType": 1, "token": "99926000"},
+    {"exchangeType": 5, "token": "99920000"},
+    {"exchangeType": 5, "token": "99920002"},
+    {"exchangeType": 5, "token": "99920003"},
 ]
 
 # subscribed = False
@@ -39,6 +43,24 @@ def build_token_list():
         for k, v in token_map.items()
     ]
 
+
+def unsubscribe_all():
+    # global subscribed
+    # if not subscribed:
+    #     return
+
+    req = {
+        "correlationID": "batch_unsub",
+        "action": 0,
+        "params": {
+            "mode": 3,
+            "tokenList": build_token_list(),
+        },
+    }
+
+    angel_container.angel.ws.send(json.dumps(req))
+    # subscribed = False
+    print("❌ Angel batch unsubscribed")
 
 # def subscribe_all():
 #     # global subscribed
@@ -57,23 +79,3 @@ def build_token_list():
 #     angel.ws.send(json.dumps(req))
 #     # subscribed = True
 #     print("✅ Angel batch subscribed")
-
-
-def unsubscribe_all():
-    # global subscribed
-    # if not subscribed:
-    #     return
-
-    req = {
-        "correlationID": "batch_unsub",
-        "action": 0,
-        "params": {
-            "mode": 3,
-            "tokenList": build_token_list(),
-        },
-    }
-
-    angel.ws.send(json.dumps(req))
-    # subscribed = False
-    print("❌ Angel batch unsubscribed")
-

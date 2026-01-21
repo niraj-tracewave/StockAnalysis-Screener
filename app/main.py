@@ -1,5 +1,7 @@
 import asyncio
 
+from app.core.angel_auto_login import AngelAutoLogin
+from app.core.angel_container import angel_container
 from app.core.angel_ws import AngelWSClient
 from app.core.event_loop import loop_store
 
@@ -28,14 +30,21 @@ async def lifespan(app: FastAPI):  # type: ignore[override]
     yield
     logger.info("Shutting down StockAnalysis Screener API")
 
+
+auth = AngelAutoLogin()
+tokens = auth.login()
+
+print(tokens, "---tokens----")
+
 angel = AngelWSClient(
     client_id="6e560bba-4d04-464c-ac06-7e5c9c508792",
-    access_token="eyJhbGciOiJIUzUxMiJ9.eyJ1c2VybmFtZSI6IkQ0NjI0NDkiLCJyb2xlcyI6MCwidXNlcnR5cGUiOiJVU0VSIiwidG9rZW4iOiJleUpoYkdjaU9pSlNVekkxTmlJc0luUjVjQ0k2SWtwWFZDSjkuZXlKMWMyVnlYM1I1Y0dVaU9pSmpiR2xsYm5RaUxDSjBiMnRsYmw5MGVYQmxJam9pZEhKaFpHVmZZV05qWlhOelgzUnZhMlZ1SWl3aVoyMWZhV1FpT2pFeUxDSnpiM1Z5WTJVaU9pSXpJaXdpWkdWMmFXTmxYMmxrSWpvaU9EQmxOalF6TURndE16bGlaUzB6TkdWa0xXRmpOamd0TmpFNU56ZzFORFk1TXpBM0lpd2lhMmxrSWpvaWRISmhaR1ZmYTJWNVgzWXlJaXdpYjIxdVpXMWhibUZuWlhKcFpDSTZNVElzSW5CeWIyUjFZM1J6SWpwN0ltUmxiV0YwSWpwN0luTjBZWFIxY3lJNkltRmpkR2wyWlNKOUxDSnRaaUk2ZXlKemRHRjBkWE1pT2lKaFkzUnBkbVVpZlgwc0ltbHpjeUk2SW5SeVlXUmxYMnh2WjJsdVgzTmxjblpwWTJVaUxDSnpkV0lpT2lKRU5EWXlORFE1SWl3aVpYaHdJam94TnpZNE9Ua3hNak15TENKdVltWWlPakUzTmpnNU1EUTJOVElzSW1saGRDSTZNVGMyT0Rrd05EWTFNaXdpYW5ScElqb2lPVEV6TVdNelptTXROemhtTkMwME1qSTRMV0U1TlRrdE9XSTFZelJoTldWa056RTNJaXdpVkc5clpXNGlPaUlpZlEuRGZ0ci1ldFI5MF94MzQ4eUt5aTUtQ1ZReE8wQVM2bm9FLXRSWXczYWRMUG1ZeVlkbE5VaFluNmNOeTY4ZFhXX2FuZTZPbm5PcjdBRmlpMEdXVlU4aGx4NHhHVzFGbWlsYVlldjNUMFB3X0ZZZTlXWkM3UmdGdWY2VXZiWUw5cy1jZ3lkWHhHcHZURW44ZXBTQzRMYmpRMWJwN0Vlc0tkQlpFTzFvZTZielVzIiwiQVBJLUtFWSI6Im0xQWs2emV6IiwiWC1PTEQtQVBJLUtFWSI6ZmFsc2UsImlhdCI6MTc2ODkwNDgzMiwiZXhwIjoxNzY4OTMzODAwfQ.EfgjRi46ust_DSKThA3G52nQVL1SE5lVR9UVU9KolF9Vwzh8hKOPgJZ-LLfGHGwcDWm94JnOY82tYItA1_yeGg",
+    access_token=tokens["access_token"],
+    feed_token=tokens["feed_token"],
     api_key="m1Ak6zez",
 )
 
 angel.connect()
-
+angel_container.angel = angel
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,

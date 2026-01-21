@@ -102,9 +102,10 @@ from app.db.redis.redis import redis_client
 
 
 class AngelWSClient:
-    def __init__(self, client_id, access_token, api_key):
+    def __init__(self, client_id, access_token, api_key, feed_token):
         self.client_id = client_id
         self.access_token = access_token
+        self.feed_token = feed_token
         self.api_key = api_key
         self.ws = None
 
@@ -130,16 +131,16 @@ class AngelWSClient:
         url = (
             "wss://smartapisocket.angelone.in/smart-stream"
             f"?client_id={self.client_id}"
-            f"&token={self.access_token}"
+            f"&token={self.feed_token}"
             f"&api_key={self.api_key}"
         )
-
+        print(self.feed_token)
         headers = {
                         "Content-Type": "application/json",
                         "Authorization": f"Bearer {self.access_token}",
                         "x-api-key": self.api_key,
                         "x-client-code": self.client_id,
-                        "x-feed-token": "eyJhbGciOiJIUzUxMiJ9.eyJ1c2VybmFtZSI6IkQ0NjI0NDkiLCJpYXQiOjE3Njg4ODk3NTAsImV4cCI6MTc2ODk3NjE1MH0.m4YJj6YWlOELYFWKlP2IC-SHY4HqzkpUmoDqRdnuYX8tgMMRzKipRIqjfLMIQ5FgUtSCciGF9mTHdFjOhbO_Eg"
+                        "x-feed-token": self.feed_token
                     }
 
         self.ws = websocket.WebSocketApp(
