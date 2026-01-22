@@ -34,13 +34,12 @@ async def lifespan(app: FastAPI):  # type: ignore[override]
 auth = AngelAutoLogin()
 tokens = auth.login()
 
-print(tokens, "---tokens----")
-
 angel = AngelWSClient(
     client_id="6e560bba-4d04-464c-ac06-7e5c9c508792",
     access_token=tokens["access_token"],
-    feed_token=tokens["feed_token"],
+    feed_token=f"{tokens["feed_token"]}s",
     api_key="m1Ak6zez",
+    auto_login=auth
 )
 
 angel.connect()

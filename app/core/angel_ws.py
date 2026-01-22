@@ -102,12 +102,14 @@ from app.db.redis.redis import redis_client
 
 
 class AngelWSClient:
-    def __init__(self, client_id, access_token, api_key, feed_token):
+    def __init__(self, client_id, access_token, api_key, feed_token, auto_login):
         self.client_id = client_id
         self.access_token = access_token
         self.feed_token = feed_token
         self.api_key = api_key
         self.ws = None
+        self.auto_login = auto_login  # AngelAutoLogin instance
+        self.reconnecting = False
 
     def subscribe_all(self):
         from app.core.market_bridge import build_token_list
@@ -128,37 +130,67 @@ class AngelWSClient:
         print("✅ Angel batch subscribed")
 
     def connect(self):
-        url = (
-            "wss://smartapisocket.angelone.in/smart-stream"
-            f"?client_id={self.client_id}"
-            f"&token={self.feed_token}"
-            f"&api_key={self.api_key}"
-        )
-        print(self.feed_token)
-        headers = {
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {self.access_token}",
-                        "x-api-key": self.api_key,
-                        "x-client-code": self.client_id,
-                        "x-feed-token": self.feed_token
-                    }
+        try:
+            url = (
+                "wss://smartapisocket.angelone.in/smart-stream"
+                f"?client_id={self.client_id}"
+                f"&token={self.feed_token}"
+                f"&api_key={self.api_key}"
+            )
+            headers = {
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {self.access_token}",
+                            "x-api-key": self.api_key,
+                            "x-client-code": self.client_id,
+                            "x-feed-token": self.feed_token
+                        }
 
-        self.ws = websocket.WebSocketApp(
-            url,
-            header=[f"{k}: {v}" for k, v in headers.items()],
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_close=self.on_close,
-        )
+            self.ws = websocket.WebSocketApp(
+                url,
+                header=[f"{k}: {v}" for k, v in headers.items()],
+                on_open=self.on_open,
+                on_message=self.on_message,
+                on_close=self.on_close,
+            )
+            threading.Thread(
+                target=self.ws.run_forever,
+                kwargs={
+                    "ping_interval": 25,
+                    "ping_timeout": 10,
+                },
+                daemon=True
+            ).start()
+        except Exception as e:
+            pass
 
-        threading.Thread(
-            target=self.ws.run_forever,
-            kwargs={
-                "ping_interval": 25,
-                "ping_timeout": 10,
-            },
-            daemon=True
-        ).start()
+    def reconnect(self):
+        if self.reconnecting:
+            return
+
+        self.reconnecting = True
+        print("🔁 Reconnecting Angel WS (token refresh)...")
+
+        try:
+            tokens = self.auto_login.login()  # 🔥 regenerate token
+
+            self.access_token = tokens["access_token"]
+            self.feed_token = tokens["feed_token"]
+
+            print("✅ New tokens generated")
+
+            if self.ws:
+                try:
+                    self.ws.close()
+                except:
+                    pass
+
+            self.connect()
+
+        except Exception as e:
+            print("❌ Reconnect failed:", e)
+
+        finally:
+            self.reconnecting = False
 
     def on_open(self, ws):
         print("✅ Angel WebSocket Connected")
@@ -166,6 +198,7 @@ class AngelWSClient:
 
     def on_close(self, ws, code, reason):
         print("❌ Angel WebSocket Closed:", reason)
+        self.reconnect()
 
     def on_message(self, ws, binary_message: bytes):
         try:
@@ -192,4 +225,8 @@ class AngelWSClient:
                 )
 
         except Exception as e:
-            print("❌ Angel parse error:", e)
+            if isinstance(binary_message, str):
+                if "token" in binary_message.lower() or "auth" in binary_message.lower():
+                    print("⚠️ Token expired detected from server message")
+                    self.reconnect()
+                    return

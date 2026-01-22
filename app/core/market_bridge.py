@@ -27,7 +27,10 @@ ANGEL_SYMBOLS = [
     {"exchangeType": 1, "token": "99926000"},
     {"exchangeType": 5, "token": "99920000"},
     {"exchangeType": 5, "token": "99920002"},
-    {"exchangeType": 5, "token": "99920003"},
+    {"exchangeType": 13, "token": "1"},
+    {"exchangeType": 13, "token": "25"},
+    {"exchangeType": 13, "token": "26"},
+    {"exchangeType": 13, "token": "27"},
 ]
 
 # subscribed = False
