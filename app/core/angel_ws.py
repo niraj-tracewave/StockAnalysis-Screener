@@ -96,6 +96,7 @@ import threading
 import websocket
 import asyncio
 
+from app.core.constants import EXCHANGE_TYPE_MAP
 from app.core.event_loop import loop_store
 from app.apis.v1.websockets.manager import manager
 from app.db.redis.redis import redis_client
@@ -206,13 +207,20 @@ class AngelWSClient:
 
             unpacked = struct.unpack("<6q2d4q", binary_message[27:123])
 
+            exchange_type_code = binary_message[1]
+            exch = EXCHANGE_TYPE_MAP.get(exchange_type_code, "unknown")
+            if exch == "cde_fo":
+                divisor = 10000000.0  # currency
+            else:
+                divisor = 100.0  # equity, mcx, indices, etc
+
             data = {
                 "token": token,
-                "ltp": unpacked[2] / 100,
-                "open": unpacked[8] / 100,
-                "high": unpacked[9] / 100,
-                "low": unpacked[10] / 100,
-                "close": unpacked[11] / 100,
+                "ltp": unpacked[2] / divisor,
+                "open": unpacked[8] / divisor,
+                "high": unpacked[9] / divisor,
+                "low": unpacked[10] / divisor,
+                "close": unpacked[11] / divisor,
             }
             redis_client.set(
                 f"last_tick:{token}",
