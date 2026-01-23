@@ -18,14 +18,12 @@ class AngelAutoLogin:
 
     def login(self):
         totp = pyotp.TOTP(self.totp_secret).now()
-        print(totp)
 
         data = self.smart.generateSession(
             self.client_code,
             self.password,
             totp
         )
-        print(data)
 
         if not data["status"]:
             raise Exception(data)

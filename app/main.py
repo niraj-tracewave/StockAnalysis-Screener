@@ -35,10 +35,10 @@ auth = AngelAutoLogin()
 tokens = auth.login()
 
 angel = AngelWSClient(
-    client_id="6e560bba-4d04-464c-ac06-7e5c9c508792",
+    client_id=settings.ANGLE_ONE_CLIENT_ID,
     access_token=tokens["access_token"],
     feed_token=tokens["feed_token"],
-    api_key="m1Ak6zez",
+    api_key=settings.ANGLE_ONE_API_KEY,
     auto_login=auth
 )
 
