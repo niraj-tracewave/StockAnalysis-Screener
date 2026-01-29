@@ -676,3 +676,12 @@ share_holding_pattern = {
   ]
 }
 
+EXCHANGE_TYPE_MAP = {
+    1: "nse_cm",   # NSE Cash
+    2: "nse_fo",   # NSE F&O
+    3: "bse_cm",   # BSE Cash
+    4: "bse_fo",   # BSE F&O
+    5: "mcx_fo",   # MCX Commodities
+    7: "ncx_fo",   # NCDEX
+    13: "cde_fo",  # CDS (Currency Derivatives)
+}

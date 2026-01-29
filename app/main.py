@@ -1,3 +1,10 @@
+import asyncio
+
+from app.core.angel_auto_login import AngelAutoLogin
+from app.core.angel_container import angel_container
+from app.core.angel_ws import AngelWSClient
+from app.core.event_loop import loop_store
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -8,6 +15,8 @@ from app.apis.v1.base_routers import  api_router
 from app.core.config import get_settings
 from app.core.custom_error_response import CustomValidationError
 from app.core.logging_config import setup_logging, logger
+from app.apis.v1.websockets import stock_ws
+
 
 
 settings = get_settings()
@@ -17,10 +26,24 @@ settings = get_settings()
 async def lifespan(app: FastAPI):  # type: ignore[override]
     setup_logging()
     logger.info("Starting StockAnalysis Screener API")
+    loop_store.event_loop = asyncio.get_running_loop()
     yield
     logger.info("Shutting down StockAnalysis Screener API")
 
 
+auth = AngelAutoLogin()
+tokens = auth.login()
+
+angel = AngelWSClient(
+    client_id=settings.ANGLE_ONE_CLIENT_ID,
+    access_token=tokens["access_token"],
+    feed_token=tokens["feed_token"],
+    api_key=settings.ANGLE_ONE_API_KEY,
+    auto_login=auth
+)
+
+angel.connect()
+angel_container.angel = angel
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
@@ -28,6 +51,7 @@ app = FastAPI(
 )
 
 app.include_router(api_router, prefix="/apis/v1")
+app.include_router(stock_ws.router)
 
 
 @app.get("/health", tags=["health"])

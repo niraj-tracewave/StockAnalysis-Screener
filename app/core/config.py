@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: str = '60'
     refresh_token_expire_days: str = '30'
     secret_key: str = "jhsgdjsgdjgshgdfsdkljlkjdfjklfsdkf"
+    ANGLE_ONE_API_KEY: str
+    ANGLE_ONE_CLIENT_ID: str
+    ANGLE_ONE_CLIENT_CODE: str
+    ANGLE_ONE_CLIENT_PASSWORD: str
+    ANGLE_ONE_TOTP_SECRET: str
 
     @property
     def database_url(self) -> str:
