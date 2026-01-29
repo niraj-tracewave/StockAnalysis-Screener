@@ -10,7 +10,7 @@ from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDatas
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
 from app.core.custom_response import CustomJSONResponse
-from app.core.utils import parse_qtr, parse_period_to_date
+from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code
 from app.db.postgres.base import BaseDBOperations
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
@@ -54,6 +54,7 @@ class CompanyStockFetchService:
             industry_info = sec_info.get("industryInfo")
             basic_industry = sec_info.get("basicIndustry")
             bse_code = header_data.get("SecurityCode")
+            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
         elif symbol:
             nse_data = await main(symbol)
             nse_symbol = nse_data.get('symbol')
@@ -79,6 +80,7 @@ class CompanyStockFetchService:
             sector = sec_info.get("sector")
             industry_info = sec_info.get("industryInfo")
             basic_industry = sec_info.get("basicIndustry")
+            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
         elif scrip:
             bse_data = await main_bse(search_request.scrip)
             header_data = bse_data.get('header')
@@ -106,8 +108,9 @@ class CompanyStockFetchService:
             sector = header_data.get("sector")
             industry_info = header_data.get("IGroup")
             basic_industry = header_data.get("Industry")
+            nse_code = None
         company_stock_ops = BaseDBOperations(db, CompanyStock)
-        company_stock_data_db = await company_stock_ops.create({'nse_symbol': nse_symbol, 'name': company_name,
+        company_stock_data_db = await company_stock_ops.create({'nse_symbol': nse_symbol, 'name': company_name, 'nse_code': nse_code,
                                                                 "bse_code": bse_code, "macro_economic_sector": macro,
                                                                 "sector": sector, "industry": industry_info, "basic_industry": basic_industry})
 
