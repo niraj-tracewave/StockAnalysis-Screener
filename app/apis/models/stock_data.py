@@ -40,6 +40,13 @@ class CompanyStock(Base):
         comment="NSE symbol"
     )
 
+    nse_code = Column(
+        String,
+        index=True,
+        nullable=True,
+        comment="NSE stock code"
+    )
+
     macro_economic_sector = Column(
         String,
         nullable=True,

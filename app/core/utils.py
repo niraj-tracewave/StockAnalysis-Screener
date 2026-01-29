@@ -1,5 +1,6 @@
 import calendar
 
+import pandas as pd
 import pyotp
 import uuid
 import base64
@@ -115,3 +116,28 @@ async def parse_period_to_date(period_str: str) -> date:
     year = 2000 + int(year_str)
     last_day = calendar.monthrange(year, month)[1]
     return date(year, month, last_day)
+
+def fetch_nse_scrip_code(nse_symbol, listing_at_group):
+    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    response = requests.get(url, timeout=30)
+    df = pd.DataFrame(response.json())
+
+    df = df[df["exch_seg"].isin(["NSE", "BSE"])]
+
+    lookup = {}
+    for _, row in df.iterrows():
+        lookup[(row["symbol"], row["exch_seg"])] = row["token"]
+
+    symbol = nse_symbol
+
+    token = None
+
+    if listing_at_group in ["NSE", "NSE, BSE"]:
+        token = lookup.get((f"{symbol}-EQ", "NSE")) or lookup.get((f"{symbol}-SM", "NSE")) or lookup.get(
+            (f"{symbol}-SQ", "NSE")) or lookup.get((f"{symbol}-ST", "NSE")) or lookup.get((f"{symbol}-BE", "NSE"))
+
+    if listing_at_group in ["BSE", "NSE, BSE"]:
+        token = lookup.get((symbol, "BSE")) or lookup.get((f"{symbol}-SM", "BSE")) or lookup.get(
+            (f"{symbol}-SQ", "BSE")) or lookup.get((f"{symbol}-ST", "BSE")) or lookup.get((f"{symbol}-BE", "BSE"))
+
+    return token
