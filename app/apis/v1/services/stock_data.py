@@ -404,7 +404,7 @@ class CompanyStockFetchService:
                 "cash_flow": cash_flow,
                 "ratios": ratios,
                 "share_holding_pattern": share_holding_pattern,
-                "use_own_stock_socket": False
+                "use_own_stock_socket": True
             })
 
         return CustomJSONResponse(
@@ -495,7 +495,7 @@ class CompanyStockFetchService:
             "cash_flow": cash_flow,
             "ratios": ratios,
             "share_holding_pattern": share_holding_pattern,
-            "use_own_stock_socket": False
+            "use_own_stock_socket": True
         }
 
         return CustomJSONResponse(
