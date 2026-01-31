@@ -80,7 +80,7 @@ class CompanyStockFetchService:
             sector = sec_info.get("sector")
             industry_info = sec_info.get("industryInfo")
             basic_industry = sec_info.get("basicIndustry")
-            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
         elif scrip:
             bse_data = await main_bse(search_request.scrip)
             header_data = bse_data.get('header')
