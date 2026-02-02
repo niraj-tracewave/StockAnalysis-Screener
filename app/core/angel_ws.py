@@ -221,6 +221,7 @@ class AngelWSClient:
                 "high": unpacked[9] / divisor,
                 "low": unpacked[10] / divisor,
                 "close": unpacked[11] / divisor,
+                "exchange": exch,
             }
             redis_client.set(
                 f"last_tick:{token}",
