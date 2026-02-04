@@ -23,14 +23,14 @@ def on_tick(symbol, data):
 #     angel.subscribe(exchange_type, symbol, on_tick)
 
 ANGEL_SYMBOLS = [
-    {"exchangeType": 3, "token": "99919000"},
-    {"exchangeType": 1, "token": "99926000"},
-    {"exchangeType": 5, "token": "99920000"},
-    {"exchangeType": 5, "token": "99920002"},
-    {"exchangeType": 13, "token": "1"},
-    {"exchangeType": 13, "token": "25"},
-    {"exchangeType": 13, "token": "26"},
-    {"exchangeType": 13, "token": "27"},
+    {"exchangeType": 1, "token": "99926009", "name": "Nifty Bank"},
+    {"exchangeType": 1, "token": "99926000", "name": "Nifty 50"},
+    {"exchangeType": 5, "token": "99920000", "name": "MCXCRUDEX"},
+    {"exchangeType": 5, "token": "99920002", "name": "MCXGOLDEX"},
+    {"exchangeType": 13, "token": "1", "name": "USDINR"},
+    {"exchangeType": 13, "token": "25", "name": "EURINR"},
+    {"exchangeType": 13, "token": "26", "name": "GBPINR"},
+    {"exchangeType": 13, "token": "27", "name": "JPYINR"},
 ]
 
 # subscribed = False

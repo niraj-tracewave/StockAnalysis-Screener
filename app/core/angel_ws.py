@@ -214,6 +214,23 @@ class AngelWSClient:
             else:
                 divisor = 100.0  # equity, mcx, indices, etc
 
+            ANGEL_SYMBOLS = [
+                {"exchangeType": 1, "token": "99926009", "name": "Nifty Bank"},
+                {"exchangeType": 1, "token": "99926000", "name": "Nifty 50"},
+                {"exchangeType": 5, "token": "99920000", "name": "MCXCRUDEX"},
+                {"exchangeType": 5, "token": "99920002", "name": "MCXGOLDEX"},
+                {"exchangeType": 13, "token": "1", "name": "USDINR"},
+                {"exchangeType": 13, "token": "25", "name": "EURINR"},
+                {"exchangeType": 13, "token": "26", "name": "GBPINR"},
+                {"exchangeType": 13, "token": "27", "name": "JPYINR"},
+            ]
+
+            TOKEN_NAME_MAP = {
+                sym["token"]: sym["name"]
+                for sym in ANGEL_SYMBOLS
+            }
+            TOKEN_NAME_MAP.get(token, "UNKNOWN")
+
             data = {
                 "token": token,
                 "ltp": unpacked[2] / divisor,
@@ -222,6 +239,7 @@ class AngelWSClient:
                 "low": unpacked[10] / divisor,
                 "close": unpacked[11] / divisor,
                 "exchange": exch,
+                "name":  TOKEN_NAME_MAP.get(token, "UNKNOWN")
             }
             redis_client.set(
                 f"last_tick:{token}",
