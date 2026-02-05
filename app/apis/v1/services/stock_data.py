@@ -476,8 +476,9 @@ class CompanyStockFetchService:
             bse_company_list = await fetch_bse_data(symbol)
             print(nse_company_list, bse_company_list)
             if nse_company_list and bse_company_list:
+                security_code = bse_company_list[0].get("security_code")
                 nse_data = await main(symbol)
-                bse_data = await main_bse(scrip)
+                bse_data = await main_bse(security_code)
                 nse_symbol = nse_data.get('symbol')
                 company_name = nse_data.get('companyName')
                 header_data = bse_data.get('header')
@@ -496,6 +497,7 @@ class CompanyStockFetchService:
                 high_price = nse_metadata.get('dayHigh')
                 low_price = nse_metadata.get('dayLow')
                 pe_ratio = sec_info.get('pdSymbolPe')
+                print(header_data)
                 roe = header_data.get('ROE')
                 macro = sec_info.get("macro")
                 sector = sec_info.get("sector")
@@ -565,6 +567,7 @@ class CompanyStockFetchService:
                  "sector": sector, "industry": industry_info, "basic_industry": basic_industry})
 
             key_company_stock_detail_ops = BaseDBOperations(db, KeyDetailsForCS)
+            print(roe)
             await key_company_stock_detail_ops.create({'market_cap': market_cap_cr, 'current_price': current_price,
                                                        "pe_ratio": float(
                                                            pe_ratio) if pe_ratio and pe_ratio != '-' else None,
