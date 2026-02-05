@@ -37,6 +37,8 @@ class FollowUnfollowCompanyService:
                 "is_active": obj.is_active,
                 "url": obj.url,
                 "created_at": obj.created_at,
+                "nse_code": obj.nse_code,
+                "bse_code": obj.bse_code,
             })
             for obj in data
         ]
