@@ -24,6 +24,8 @@ def store_company_data(nse_list : list, bse_list : list):
                 "symbol": item["symbol"],
                 "platform": "NSE",
                 "url": item["url"],
+                "nse_code": item["nse_code"],
+                "bse_code": None
             })
 
         for item in bse_list:
@@ -32,6 +34,8 @@ def store_company_data(nse_list : list, bse_list : list):
                 "symbol": item["symbol"],
                 "platform": "BSE",
                 "url": item["url"],
+                "bse_code": item["security_code"],
+                "nse_code": None
             })
 
         stmt = insert(Company).values(companies)

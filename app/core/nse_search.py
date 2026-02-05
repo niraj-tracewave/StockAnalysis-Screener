@@ -4,6 +4,8 @@ import aiohttp
 import requests
 from bs4 import BeautifulSoup
 
+from app.core.utils import fetch_nse_scrip_code
+
 url = "https://www.nseindia.com/api/search/autocomplete"
 headers ={
     "authority": "www.nseindia.com",
@@ -49,11 +51,13 @@ async def fetch_nse_data(search):
 
             data = await response.json()
             for symbol_data in data.get("symbols", []):
+                nse_code = fetch_nse_scrip_code(symbol_data.get("symbol"), "NSE")
                 company_list.append({
                     "symbol": symbol_data.get("symbol"),
                     "company_name": symbol_data.get("symbol_info"),
                     "url": symbol_data.get("url"),
-                    "platform": "NSE"
+                    "platform": "NSE",
+                    "nse_code": nse_code,
                 })
 
     return company_list

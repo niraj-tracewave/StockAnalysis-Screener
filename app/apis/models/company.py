@@ -12,6 +12,8 @@ class Company(Base):
     platform = Column(String(10), nullable=False)
     is_active = Column(Boolean, default=True)
     url = Column(Text, nullable=True)
+    bse_code = Column(String(15), nullable=True)
+    nse_code = Column(String(15), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
