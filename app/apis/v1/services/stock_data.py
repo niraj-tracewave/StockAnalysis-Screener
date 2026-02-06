@@ -454,184 +454,188 @@ class CompanyStockFetchService:
             symbol,scrip,
             db: Session = Depends(get_db)
     ):
+        try:
 
-        stmt = (
-            select(CompanyStock)
-            .options(selectinload(CompanyStock.details))
-            .options(selectinload(CompanyStock.charts))
-            .where(
-                or_(
-                    CompanyStock.nse_symbol == symbol,
-                    CompanyStock.bse_code == symbol
+            stmt = (
+                select(CompanyStock)
+                .options(selectinload(CompanyStock.details))
+                .options(selectinload(CompanyStock.charts))
+                .where(
+                    or_(
+                        CompanyStock.nse_symbol == symbol,
+                        CompanyStock.bse_code == symbol
+                    )
                 )
             )
-        )
 
-        result = await db.execute(stmt)
-        company = result.scalars().first()
+            result = await db.execute(stmt)
+            company = result.scalars().first()
 
-        if not company:
-            roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
-            nse_company_list = await fetch_nse_data(symbol)
-            bse_company_list = await fetch_bse_data(symbol)
-            print(nse_company_list, bse_company_list)
-            if nse_company_list and bse_company_list:
-                security_code = bse_company_list[0].get("security_code")
-                nse_data = await main(symbol)
-                bse_data = await main_bse(security_code)
-                nse_symbol = nse_data.get('symbol')
-                company_name = nse_data.get('companyName')
-                header_data = bse_data.get('header')
-                symbol_data = nse_data.get('symbolData')
-                equity_response = symbol_data.get('equityResponse')[0]
-                nse_metadata = equity_response.get('metaData')
-                trade_info = equity_response.get('tradeInfo')
-                sec_info = equity_response.get('secInfo')
-                total_market_cap = trade_info.get('totalMarketCap')
-                if total_market_cap:
-                    market_cap_cr = round(total_market_cap / 1e7, 2)
-                else:
-                    market_cap_cr = None
-                current_price = trade_info.get('lastPrice')
-                face_value = trade_info.get('faceValue')
-                high_price = nse_metadata.get('dayHigh')
-                low_price = nse_metadata.get('dayLow')
-                pe_ratio = sec_info.get('pdSymbolPe')
-                print(header_data)
-                roe = header_data.get('ROE')
-                macro = sec_info.get("macro")
-                sector = sec_info.get("sector")
-                industry_info = sec_info.get("industryInfo")
-                basic_industry = sec_info.get("basicIndustry")
-                bse_code = header_data.get("SecurityCode")
-                nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
-            elif nse_company_list:
-                nse_data = await main(symbol)
-                nse_symbol = nse_data.get('symbol')
-                company_name = nse_data.get('companyName')
-                symbol_data = nse_data.get('symbolData')
-                equity_response = symbol_data.get('equityResponse')[0]
-                nse_metadata = equity_response.get('metaData')
-                trade_info = equity_response.get('tradeInfo')
-                sec_info = equity_response.get('secInfo')
-                total_market_cap = trade_info.get('totalMarketCap')
-                if total_market_cap:
-                    market_cap_cr = round(total_market_cap / 1e7, 2)
-                else:
-                    market_cap_cr = None
-                current_price = trade_info.get('lastPrice')
-                face_value = trade_info.get('faceValue')
-                high_price = nse_metadata.get('dayHigh')
-                low_price = nse_metadata.get('dayLow')
-                pe_ratio = sec_info.get('pdSymbolPe')
-                roe = None
-                bse_code = None
-                macro = sec_info.get("macro")
-                sector = sec_info.get("sector")
-                industry_info = sec_info.get("industryInfo")
-                basic_industry = sec_info.get("basicIndustry")
-                nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
-            elif bse_company_list:
-                security_code = bse_company_list[0].get("security_code")
-                bse_data = await main_bse(security_code)
-                header_data = bse_data.get('header')
-                script_header = bse_data.get('scriptHeader')
-                company_detail = script_header.get('Cmpname')
-                header = script_header.get('Header')
-                price_graph = bse_data.get('priceGraph')
-                stock_trading = bse_data.get('stockTrading')
-                company_name = company_detail.get('FullN')
-                total_market_cap = stock_trading.get('MktCapFull', None)
-                if total_market_cap:
-                    market_cap_cr = float(total_market_cap)
-                current_price = price_graph.get('CurrVal')
-                if current_price:
-                    current_price = float(current_price)
-                face_value = header_data.get('FaceVal')
-                if face_value:
-                    face_value = float(face_value)
-                high_price = header.get('High')
-                low_price = header.get('Low')
-                pe_ratio = header_data.get('PE')
-                roe = header_data.get('ROE')
-                bse_code = header_data.get("SecurityCode")
-                macro = header_data.get("Sector")
-                sector = header_data.get("IndustryNew")
-                industry_info = header_data.get("IGroup")
-                basic_industry = header_data.get("Industry")
-                nse_code = None
-            company_stock_ops = BaseDBOperations(db, CompanyStock)
-            company_stock_data_db = await company_stock_ops.create(
-                {'nse_symbol': symbol, 'name': company_name, 'nse_code': nse_code,
-                 "bse_code": bse_code, "macro_economic_sector": macro,
-                 "sector": sector, "industry": industry_info, "basic_industry": basic_industry})
+            if not company:
+                roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
+                nse_company_list = await fetch_nse_data(symbol)
+                bse_company_list = await fetch_bse_data(symbol)
+                if nse_company_list and bse_company_list:
+                    security_code = bse_company_list[0].get("bse_code")
+                    nse_data = await main(symbol)
+                    bse_data = await main_bse(security_code)
+                    nse_symbol = nse_data.get('symbol')
+                    company_name = nse_data.get('companyName')
+                    header_data = bse_data.get('header')
+                    symbol_data = nse_data.get('symbolData')
+                    equity_response = symbol_data.get('equityResponse')[0]
+                    nse_metadata = equity_response.get('metaData')
+                    trade_info = equity_response.get('tradeInfo')
+                    sec_info = equity_response.get('secInfo')
+                    total_market_cap = trade_info.get('totalMarketCap')
+                    if total_market_cap:
+                        market_cap_cr = round(total_market_cap / 1e7, 2)
+                    else:
+                        market_cap_cr = None
+                    current_price = trade_info.get('lastPrice')
+                    face_value = trade_info.get('faceValue')
+                    high_price = nse_metadata.get('dayHigh')
+                    low_price = nse_metadata.get('dayLow')
+                    pe_ratio = sec_info.get('pdSymbolPe')
+                    roe = header_data.get('ROE')
+                    macro = sec_info.get("macro")
+                    sector = sec_info.get("sector")
+                    industry_info = sec_info.get("industryInfo")
+                    basic_industry = sec_info.get("basicIndustry")
+                    bse_code = header_data.get("SecurityCode")
+                    nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+                elif nse_company_list:
+                    nse_data = await main(symbol)
+                    nse_symbol = nse_data.get('symbol')
+                    company_name = nse_data.get('companyName')
+                    symbol_data = nse_data.get('symbolData')
+                    equity_response = symbol_data.get('equityResponse')[0]
+                    nse_metadata = equity_response.get('metaData')
+                    trade_info = equity_response.get('tradeInfo')
+                    sec_info = equity_response.get('secInfo')
+                    total_market_cap = trade_info.get('totalMarketCap')
+                    if total_market_cap:
+                        market_cap_cr = round(total_market_cap / 1e7, 2)
+                    else:
+                        market_cap_cr = None
+                    current_price = trade_info.get('lastPrice')
+                    face_value = trade_info.get('faceValue')
+                    high_price = nse_metadata.get('dayHigh')
+                    low_price = nse_metadata.get('dayLow')
+                    pe_ratio = sec_info.get('pdSymbolPe')
+                    roe = None
+                    bse_code = None
+                    macro = sec_info.get("macro")
+                    sector = sec_info.get("sector")
+                    industry_info = sec_info.get("industryInfo")
+                    basic_industry = sec_info.get("basicIndustry")
+                    nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
+                elif bse_company_list:
+                    security_code = bse_company_list[0].get("bse_code")
+                    bse_data = await main_bse(security_code)
+                    header_data = bse_data.get('header')
+                    script_header = bse_data.get('scriptHeader')
+                    company_detail = script_header.get('Cmpname')
+                    header = script_header.get('Header')
+                    price_graph = bse_data.get('priceGraph')
+                    stock_trading = bse_data.get('stockTrading')
+                    company_name = company_detail.get('FullN')
+                    total_market_cap = stock_trading.get('MktCapFull', None)
+                    if total_market_cap:
+                        market_cap_cr = float(total_market_cap)
+                    current_price = price_graph.get('CurrVal')
+                    if current_price:
+                        current_price = float(current_price)
+                    face_value = header_data.get('FaceVal')
+                    if face_value:
+                        face_value = float(face_value)
+                    high_price = header.get('High')
+                    low_price = header.get('Low')
+                    pe_ratio = header_data.get('PE')
+                    roe = header_data.get('ROE')
+                    bse_code = header_data.get("SecurityCode")
+                    macro = header_data.get("Sector")
+                    sector = header_data.get("IndustryNew")
+                    industry_info = header_data.get("IGroup")
+                    basic_industry = header_data.get("Industry")
+                    nse_code = None
+                company_stock_ops = BaseDBOperations(db, CompanyStock)
+                company_stock_data_db = await company_stock_ops.create(
+                    {'nse_symbol': symbol, 'name': company_name, 'nse_code': nse_code,
+                     "bse_code": bse_code, "macro_economic_sector": macro,
+                     "sector": sector, "industry": industry_info, "basic_industry": basic_industry})
 
-            key_company_stock_detail_ops = BaseDBOperations(db, KeyDetailsForCS)
-            print(roe)
-            await key_company_stock_detail_ops.create({'market_cap': market_cap_cr, 'current_price': current_price,
-                                                       "pe_ratio": float(
-                                                           pe_ratio) if pe_ratio and pe_ratio != '-' else None,
-                                                       "face_value": face_value, "high_price": float(high_price),
-                                                       "low_price": float(low_price), "book_value": None,
-                                                       "dividend_yield": None,
-                                                       "roce": None, "roe": float(roe) if roe and roe != '-' else None,
-                                                       "company_id": company_stock_data_db.id})
-        result = await db.execute(stmt)
-        company = result.scalars().first()
-        details = company.details
+                key_company_stock_detail_ops = BaseDBOperations(db, KeyDetailsForCS)
+                await key_company_stock_detail_ops.create({'market_cap': market_cap_cr, 'current_price': current_price,
+                                                           "pe_ratio": float(
+                                                               pe_ratio) if pe_ratio and pe_ratio != '-' else None,
+                                                           "face_value": face_value, "high_price": float(high_price),
+                                                           "low_price": float(low_price), "book_value": None,
+                                                           "dividend_yield": None,
+                                                           "roce": None, "roe": float(roe) if roe and roe != '-' else None,
+                                                           "company_id": company_stock_data_db.id})
+            result = await db.execute(stmt)
+            company = result.scalars().first()
+            details = company.details
 
-        one_month_charts = [
-            {
-                "metric": chart.metric,
-                "label": chart.label,
-                "values": chart.values,
-                "meta": chart.meta,
+            one_month_charts = [
+                {
+                    "metric": chart.metric,
+                    "label": chart.label,
+                    "values": chart.values,
+                    "meta": chart.meta,
+                }
+                for chart in company.charts
+                if chart.meta and chart.meta.get("days") == "1M"
+            ]
+
+            response = {
+                "id": company.id,
+                "name": company.name,
+                "website": company.website,
+                "bse_code": company.bse_code,
+                "nse_code": company.nse_code,
+                "nse_symbol": company.nse_symbol,
+                "macro_economic_sector": company.macro_economic_sector,
+                "sector": company.sector,
+                "industry": company.industry,
+                "basic_industry": company.basic_industry,
+
+                "key_details": {
+                    "market_cap": details.market_cap if details else None,
+                    "current_price": details.current_price if details else None,
+                    "high_price": details.high_price if details else None,
+                    "low_price": details.low_price if details else None,
+                    "pe_ratio": details.pe_ratio if details else None,
+                    "book_value": details.book_value if details else None,
+                    "dividend_yield": details.dividend_yield if details else None,
+                    "roce": details.roce if details else None,
+                    "roe": details.roe if details else None,
+                    "face_value": details.face_value if details else None,
+                    "about": details.about if details else None,
+                    "key_points": details.key_points if details else None,
+                    "pros": details.pros if details else None,
+                    "cons": details.cons if details else None,
+                } if details else None,
+
+                "chart": one_month_charts,
+                "quarterly_result": quarterly_result,
+                "profit_loss": profit_loss,
+                "balance_sheet": balance_sheet,
+                "cash_flow": cash_flow,
+                "ratios": ratios,
+                "share_holding_pattern": share_holding_pattern,
+                "use_own_stock_socket": True
             }
-            for chart in company.charts
-            if chart.meta and chart.meta.get("days") == "1M"
-        ]
 
-        response = {
-            "id": company.id,
-            "name": company.name,
-            "website": company.website,
-            "bse_code": company.bse_code,
-            "nse_code": company.nse_code,
-            "nse_symbol": company.nse_symbol,
-            "macro_economic_sector": company.macro_economic_sector,
-            "sector": company.sector,
-            "industry": company.industry,
-            "basic_industry": company.basic_industry,
-
-            "key_details": {
-                "market_cap": details.market_cap if details else None,
-                "current_price": details.current_price if details else None,
-                "high_price": details.high_price if details else None,
-                "low_price": details.low_price if details else None,
-                "pe_ratio": details.pe_ratio if details else None,
-                "book_value": details.book_value if details else None,
-                "dividend_yield": details.dividend_yield if details else None,
-                "roce": details.roce if details else None,
-                "roe": details.roe if details else None,
-                "face_value": details.face_value if details else None,
-                "about": details.about if details else None,
-                "key_points": details.key_points if details else None,
-                "pros": details.pros if details else None,
-                "cons": details.cons if details else None,
-            } if details else None,
-
-            "chart": one_month_charts,
-            "quarterly_result": quarterly_result,
-            "profit_loss": profit_loss,
-            "balance_sheet": balance_sheet,
-            "cash_flow": cash_flow,
-            "ratios": ratios,
-            "share_holding_pattern": share_holding_pattern,
-            "use_own_stock_socket": True
-        }
-
-        return CustomJSONResponse(
-            success=True,
-            message="Company detail fetched successfully",
-            data=response
-        )
+            return CustomJSONResponse(
+                success=True,
+                message="Company detail fetched successfully",
+                data=response
+            )
+        except Exception as e:
+            return CustomJSONResponse(
+                success=False,
+                message=str(e),
+                data={}
+            )

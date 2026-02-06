@@ -58,6 +58,7 @@ async def fetch_nse_data(search):
                     "url": symbol_data.get("url"),
                     "platform": "NSE",
                     "nse_code": nse_code,
+                    "bse_code": None
                 })
 
     return company_list
@@ -108,9 +109,10 @@ async def fetch_bse_data(search):
             company_list.append({
                 "company_name": company_name,
                 "symbol": symbol,
-                "security_code": security_code,
+                "bse_code": security_code,
                 "url": f"/{url}/",
-                "platform": "BSE"
+                "platform": "BSE",
+                "nse_code": None,
             })
         return company_list
     return company_list
