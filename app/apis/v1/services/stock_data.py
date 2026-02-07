@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime
 
@@ -11,7 +12,7 @@ from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
 from app.core.custom_response import CustomJSONResponse
 from app.core.nse_search import fetch_nse_data, fetch_bse_data
-from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code
+from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code, fetch_top_50_company_from_nse
 from app.db.postgres.base import BaseDBOperations
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
@@ -574,6 +575,61 @@ class CompanyStockFetchService:
                                                            "dividend_yield": None,
                                                            "roce": None, "roe": float(roe) if roe and roe != '-' else None,
                                                            "company_id": company_stock_data_db.id})
+
+                company_stock_ops = BaseDBOperations(db, CompanyStock)
+                fields = ["id"]
+
+                attrs = [getattr(CompanyStock, f) for f in fields]
+                # days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
+                days_list = ["1W", "1D", "1M", "1Y", "5Y"]
+                if nse_company_list and bse_company_list:
+                    security_code = bse_company_list[0].get("bse_code")
+                    company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                        attrs, nse_symbol=symbol, bse_code=security_code
+                    )
+                    for days in days_list:
+                        nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                        chart = nse_data.get('chart')
+                        company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                        company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                            {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
+                             "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                elif nse_company_list:
+                    company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                        attrs, nse_symbol=symbol
+                    )
+                    for days in days_list:
+                        nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                        chart = nse_data.get('chart')
+                        company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                        company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                            {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
+                             "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                elif bse_company_list:
+                    # days_list = ["1M", "1Y", "5Y", "10Y"]
+                    security_code = bse_company_list[0].get("bse_code")
+                    days_list = ["1D","5D", "1M", "3M", "6M", "1Y"]
+                    company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                        attrs, bse_code=security_code
+                    )
+                    for days in days_list:
+                        bse_data = await main_fetch_stock_price_for_bse_graph(security_code, days)
+                        script_header = bse_data.get('scriptHeader')
+                        data_list = json.loads(script_header.get("Data"))
+                        result = []
+
+                        for item in data_list:
+                            ts_ms = int(
+                                datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
+                            )
+                            price = float(item["vale1"])
+                            result.append([ts_ms, price])
+
+                        company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                        company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                            {'metric': "Price", 'label': "Price on BSE", "meta": {"days": days}, "values": result,
+                             "company_id": company_stock_data_db.id})
+
             result = await db.execute(stmt)
             company = result.scalars().first()
             details = company.details
@@ -632,6 +688,195 @@ class CompanyStockFetchService:
                 success=True,
                 message="Company detail fetched successfully",
                 data=response
+            )
+        except Exception as e:
+            return CustomJSONResponse(
+                success=False,
+                message=str(e),
+                data={}
+            )
+
+    @staticmethod
+    async def fetch_and_store_top_50_company_data(db: Session = Depends(get_db)):
+        try:
+            symbol_list = await fetch_top_50_company_from_nse()
+            for symbol in symbol_list[20:]:
+                stmt = (
+                    select(CompanyStock)
+                    .where(
+                        or_(
+                            CompanyStock.nse_symbol == symbol,
+                            CompanyStock.bse_code == symbol
+                        )
+                    )
+                )
+
+                result = await db.execute(stmt)
+                company = result.scalars().first()
+                await asyncio.sleep(300)
+                if not company:
+                    roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
+                    nse_company_list = await fetch_nse_data(symbol)
+                    bse_company_list = await fetch_bse_data(symbol)
+                    if nse_company_list and bse_company_list:
+                        security_code = bse_company_list[0].get("bse_code")
+                        nse_data = await main(symbol)
+                        bse_data = await main_bse(security_code)
+                        nse_symbol = nse_data.get('symbol')
+                        company_name = nse_data.get('companyName')
+                        header_data = bse_data.get('header')
+                        symbol_data = nse_data.get('symbolData')
+                        equity_response = symbol_data.get('equityResponse')[0]
+                        nse_metadata = equity_response.get('metaData')
+                        trade_info = equity_response.get('tradeInfo')
+                        sec_info = equity_response.get('secInfo')
+                        total_market_cap = trade_info.get('totalMarketCap')
+                        if total_market_cap:
+                            market_cap_cr = round(total_market_cap / 1e7, 2)
+                        else:
+                            market_cap_cr = None
+                        current_price = trade_info.get('lastPrice')
+                        face_value = trade_info.get('faceValue')
+                        high_price = nse_metadata.get('dayHigh')
+                        low_price = nse_metadata.get('dayLow')
+                        pe_ratio = sec_info.get('pdSymbolPe')
+                        roe = header_data.get('ROE')
+                        macro = sec_info.get("macro")
+                        sector = sec_info.get("sector")
+                        industry_info = sec_info.get("industryInfo")
+                        basic_industry = sec_info.get("basicIndustry")
+                        bse_code = header_data.get("SecurityCode")
+                        nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+                    elif nse_company_list:
+                        nse_data = await main(symbol)
+                        nse_symbol = nse_data.get('symbol')
+                        company_name = nse_data.get('companyName')
+                        symbol_data = nse_data.get('symbolData')
+                        equity_response = symbol_data.get('equityResponse')[0]
+                        nse_metadata = equity_response.get('metaData')
+                        trade_info = equity_response.get('tradeInfo')
+                        sec_info = equity_response.get('secInfo')
+                        total_market_cap = trade_info.get('totalMarketCap')
+                        if total_market_cap:
+                            market_cap_cr = round(total_market_cap / 1e7, 2)
+                        else:
+                            market_cap_cr = None
+                        current_price = trade_info.get('lastPrice')
+                        face_value = trade_info.get('faceValue')
+                        high_price = nse_metadata.get('dayHigh')
+                        low_price = nse_metadata.get('dayLow')
+                        pe_ratio = sec_info.get('pdSymbolPe')
+                        roe = None
+                        bse_code = None
+                        macro = sec_info.get("macro")
+                        sector = sec_info.get("sector")
+                        industry_info = sec_info.get("industryInfo")
+                        basic_industry = sec_info.get("basicIndustry")
+                        nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
+                    elif bse_company_list:
+                        security_code = bse_company_list[0].get("bse_code")
+                        bse_data = await main_bse(security_code)
+                        header_data = bse_data.get('header')
+                        script_header = bse_data.get('scriptHeader')
+                        company_detail = script_header.get('Cmpname')
+                        header = script_header.get('Header')
+                        price_graph = bse_data.get('priceGraph')
+                        stock_trading = bse_data.get('stockTrading')
+                        company_name = company_detail.get('FullN')
+                        total_market_cap = stock_trading.get('MktCapFull', None)
+                        if total_market_cap:
+                            market_cap_cr = float(total_market_cap)
+                        current_price = price_graph.get('CurrVal')
+                        if current_price:
+                            current_price = float(current_price)
+                        face_value = header_data.get('FaceVal')
+                        if face_value:
+                            face_value = float(face_value)
+                        high_price = header.get('High')
+                        low_price = header.get('Low')
+                        pe_ratio = header_data.get('PE')
+                        roe = header_data.get('ROE')
+                        bse_code = header_data.get("SecurityCode")
+                        macro = header_data.get("Sector")
+                        sector = header_data.get("IndustryNew")
+                        industry_info = header_data.get("IGroup")
+                        basic_industry = header_data.get("Industry")
+                        nse_code = None
+                    company_stock_ops = BaseDBOperations(db, CompanyStock)
+                    company_stock_data_db = await company_stock_ops.create(
+                        {'nse_symbol': symbol, 'name': company_name, 'nse_code': nse_code,
+                         "bse_code": bse_code, "macro_economic_sector": macro,
+                         "sector": sector, "industry": industry_info, "basic_industry": basic_industry})
+
+                    key_company_stock_detail_ops = BaseDBOperations(db, KeyDetailsForCS)
+                    await key_company_stock_detail_ops.create({'market_cap': market_cap_cr, 'current_price': current_price,
+                                                               "pe_ratio": float(
+                                                                   pe_ratio) if pe_ratio and pe_ratio != '-' else None,
+                                                               "face_value": face_value, "high_price": float(high_price),
+                                                               "low_price": float(low_price), "book_value": None,
+                                                               "dividend_yield": None,
+                                                               "roce": None, "roe": float(roe) if roe and roe != '-' else None,
+                                                               "company_id": company_stock_data_db.id})
+
+                    company_stock_ops = BaseDBOperations(db, CompanyStock)
+                    fields = ["id"]
+
+                    attrs = [getattr(CompanyStock, f) for f in fields]
+                    days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
+                    # days_list = ["1W", "1D", "1M"]
+                    if nse_company_list and bse_company_list:
+                        security_code = bse_company_list[0].get("bse_code")
+                        company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                            attrs, nse_symbol=symbol, bse_code=security_code
+                        )
+                        for days in days_list:
+                            nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                            chart = nse_data.get('chart')
+                            company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                            company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                                {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
+                                 "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                    elif nse_company_list:
+                        company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                            attrs, nse_symbol=symbol
+                        )
+                        for days in days_list:
+                            nse_data = await main_fetch_stock_price_for_graph(symbol, days)
+                            chart = nse_data.get('chart')
+                            company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                            company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                                {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
+                                 "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                    elif bse_company_list:
+                        # days_list = ["1M", "1Y", "5Y", "10Y"]
+                        security_code = bse_company_list[0].get("bse_code")
+                        days_list = ["1W", "1Y", "5Y"]
+                        company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
+                            attrs, bse_code=security_code
+                        )
+                        for days in days_list:
+                            bse_data = await main_fetch_stock_price_for_bse_graph(security_code, days)
+                            script_header = bse_data.get('scriptHeader')
+                            data_list = json.loads(script_header.get("Data"))
+                            result = []
+
+                            for item in data_list:
+                                ts_ms = int(
+                                    datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
+                                )
+                                price = float(item["vale1"])
+                                result.append([ts_ms, price])
+
+                            company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                            company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
+                                {'metric': "Price", 'label': "Price on BSE", "meta": {"days": days}, "values": result,
+                                 "company_id": company_stock_data_db.id})
+
+
+            return CustomJSONResponse(
+                success=True,
+                message="Company detail fetched successfully",
+                data=symbol_list
             )
         except Exception as e:
             return CustomJSONResponse(

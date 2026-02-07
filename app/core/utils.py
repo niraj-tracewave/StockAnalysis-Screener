@@ -141,3 +141,36 @@ def fetch_nse_scrip_code(nse_symbol, listing_at_group):
             (f"{symbol}-SQ", "BSE")) or lookup.get((f"{symbol}-ST", "BSE")) or lookup.get((f"{symbol}-BE", "BSE"))
 
     return token
+
+
+async def fetch_top_50_company_from_nse():
+    url = "https://www.nseindia.com/api/NextApi/apiClient/indexTrackerApi?functionName=getContributionData&&index=NIFTY 50&&noofrecords=0&&flag=1"
+    headers = {
+        "authority": "www.nseindia.com",
+        "method": "GET",
+        "path": "/api/NextApi/apiClient/indexTrackerApi?functionName=getContributionData&&index=NIFTY%2050&&noofrecords=0&&flag=1",
+        "scheme": "https",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "if-none-match": "\"17i5kdsty1y7dp\"",
+        "priority": "u=1, i",
+        "referer": "https://www.nseindia.com/index-tracker/NIFTY 50",
+        "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Linux\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    }
+    session = requests.Session()
+    response = session.get(url, headers=headers, timeout=30)
+
+    top_50_company = response.json()
+    top_50_company_symbols = []
+    if top_50_company:
+        top_50_company = top_50_company.get("data")
+        for row in top_50_company:
+            top_50_company_symbols.append(row["icSymbol"])
+
+    return top_50_company_symbols

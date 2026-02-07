@@ -52,3 +52,7 @@ async def search_company( page: int = Query(1, ge=1),
 @router.get("/list-of-listed-company-detail/{symbol}/", status_code=status.HTTP_200_OK)
 async def search_company( symbol: str, scrip: str | None = None, db: Session = Depends(get_db)):
     return await CompanyStockFetchService.fetch_listed_company_detail(symbol, scrip, db)
+
+@router.get("/fetch-top-50-nse-data", status_code=status.HTTP_200_OK)
+async def search_company(db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.fetch_and_store_top_50_company_data(db)
