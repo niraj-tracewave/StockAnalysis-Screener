@@ -700,7 +700,7 @@ class CompanyStockFetchService:
     async def fetch_and_store_top_50_company_data(db: Session = Depends(get_db)):
         try:
             symbol_list = await fetch_top_50_company_from_nse()
-            for symbol in symbol_list[20:]:
+            for symbol in symbol_list[20:35]:
                 stmt = (
                     select(CompanyStock)
                     .where(
