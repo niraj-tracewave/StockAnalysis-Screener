@@ -505,7 +505,7 @@ class CompanyStockFetchService:
                     industry_info = sec_info.get("industryInfo")
                     basic_industry = sec_info.get("basicIndustry")
                     bse_code = header_data.get("SecurityCode")
-                    nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+                    nse_code = nse_company_list[0].get("nse_code")
                 elif nse_company_list:
                     nse_data = await main(symbol)
                     nse_symbol = nse_data.get('symbol')
@@ -531,7 +531,7 @@ class CompanyStockFetchService:
                     sector = sec_info.get("sector")
                     industry_info = sec_info.get("industryInfo")
                     basic_industry = sec_info.get("basicIndustry")
-                    nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
+                    nse_code = nse_company_list[0].get("nse_code")
                 elif bse_company_list:
                     security_code = bse_company_list[0].get("bse_code")
                     bse_data = await main_bse(security_code)
