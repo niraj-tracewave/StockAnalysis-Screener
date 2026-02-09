@@ -56,3 +56,7 @@ async def search_company( symbol: str, scrip: str | None = None, db: Session = D
 @router.get("/fetch-top-50-nse-data", status_code=status.HTTP_200_OK)
 async def search_company(db: Session = Depends(get_db)):
     return await CompanyStockFetchService.fetch_and_store_top_50_company_data(db)
+
+@router.get("/fetch-scrip-code", status_code=status.HTTP_200_OK)
+async def search_company():
+    return await CompanyStockFetchService.fetch_and_get_scrip_code_from_angle_one()

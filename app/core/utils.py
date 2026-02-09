@@ -1,16 +1,19 @@
 import calendar
 
+import aiohttp
 import pandas as pd
 import pyotp
 import uuid
 import base64
 
 import requests
-
+import json
 from app.core.config import get_settings
 
 
 settings = get_settings()
+
+ANGEL_NSE_MAP = {}
 
 async def generate_otp_from_pyotp():
     user_uuid = uuid.uuid4()
@@ -174,3 +177,67 @@ async def fetch_top_50_company_from_nse():
             top_50_company_symbols.append(row["icSymbol"])
 
     return top_50_company_symbols
+
+def sync_fetch_top_50_company_from_nse():
+    url = "https://www.nseindia.com/api/NextApi/apiClient/indexTrackerApi?functionName=getContributionData&&index=NIFTY 50&&noofrecords=0&&flag=1"
+    headers = {
+        "authority": "www.nseindia.com",
+        "method": "GET",
+        "path": "/api/NextApi/apiClient/indexTrackerApi?functionName=getContributionData&&index=NIFTY%2050&&noofrecords=0&&flag=1",
+        "scheme": "https",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "if-none-match": "\"17i5kdsty1y7dp\"",
+        "priority": "u=1, i",
+        "referer": "https://www.nseindia.com/index-tracker/NIFTY 50",
+        "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Linux\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    }
+    session = requests.Session()
+    response = session.get(url, headers=headers, timeout=30)
+
+    top_50_company = response.json()
+    top_50_company_symbols = []
+    if top_50_company:
+        top_50_company = top_50_company.get("data")
+        for row in top_50_company:
+            top_50_company_symbols.append(row["icSymbol"])
+
+    return top_50_company_symbols
+
+
+
+def load_angel_map():
+    global ANGEL_NSE_MAP
+
+    with open("OpenAPIScripMaster.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    ANGEL_NSE_MAP = {
+        item["symbol"]: item["token"]
+        for item in data
+        if item.get("exch_seg") == "NSE"
+    }
+
+    print("Angel NSE map reloaded")
+
+async def fetch_json_from_angle_one():
+    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, timeout=30) as response:
+            response.raise_for_status()
+            data = await response.json()
+
+    # write to file (file write is sync, but fine for most cases)
+    with open("OpenAPIScripMaster.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+    load_angel_map()
+
+    print("JSON file saved successfully")

@@ -16,8 +16,7 @@ from app.core.config import get_settings
 from app.core.custom_error_response import CustomValidationError
 from app.core.logging_config import setup_logging, logger
 from app.apis.v1.websockets import stock_ws
-
-
+from app.core.utils import load_angel_map
 
 settings = get_settings()
 
@@ -26,6 +25,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):  # type: ignore[override]
     setup_logging()
     logger.info("Starting StockAnalysis Screener API")
+    load_angel_map()
     loop_store.event_loop = asyncio.get_running_loop()
     yield
     logger.info("Shutting down StockAnalysis Screener API")

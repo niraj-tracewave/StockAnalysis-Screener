@@ -12,7 +12,8 @@ from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
 from app.core.custom_response import CustomJSONResponse
 from app.core.nse_search import fetch_nse_data, fetch_bse_data
-from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code, fetch_top_50_company_from_nse
+from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code, fetch_top_50_company_from_nse, \
+    fetch_json_from_angle_one
 from app.db.postgres.base import BaseDBOperations
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
@@ -884,3 +885,13 @@ class CompanyStockFetchService:
                 message=str(e),
                 data={}
             )
+
+    @staticmethod
+    async def fetch_and_get_scrip_code_from_angle_one():
+        await fetch_json_from_angle_one()
+        return CustomJSONResponse(
+            success=True,
+            message="Listed Company list fetched successfully.",
+            data={
+            }
+        )

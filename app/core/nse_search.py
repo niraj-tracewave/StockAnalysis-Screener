@@ -4,7 +4,7 @@ import aiohttp
 import requests
 from bs4 import BeautifulSoup
 
-from app.core.utils import fetch_nse_scrip_code
+from app.core import utils
 
 url = "https://www.nseindia.com/api/search/autocomplete"
 headers ={
@@ -27,16 +27,10 @@ headers ={
     "x-requested-with": "XMLHttpRequest"
   }
 
+async def get_nse_code_from_angel(symbol: str):
+    return utils.ANGEL_NSE_MAP.get(symbol)
 
 async def fetch_nse_data(search):
-    # response = requests.get(f"{url}?q={search}", headers={**headers, "path": f"/api/search/autocomplete?q={search}"})
-    # company_list = []
-    # if response.status_code == 200:
-    #     symbols_data = response.json().get("symbols")
-    #     for symbol_data in symbols_data:
-    #         company_list.append({"symbol": symbol_data.get("symbol"), "company_name": symbol_data.get("symbol_info"), "url": symbol_data.get("url")})
-    #     return company_list
-    # return company_list
     company_list = []
 
     timeout = aiohttp.ClientTimeout(total=10)
@@ -51,15 +45,46 @@ async def fetch_nse_data(search):
 
             data = await response.json()
             for symbol_data in data.get("symbols", []):
-                nse_code = fetch_nse_scrip_code(symbol_data.get("symbol"), "NSE")
+                activeSeries = symbol_data.get("activeSeries")
+                if activeSeries:
+                    series = activeSeries[0]
+                    nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{series}")
+                    company_list.append({
+                        "symbol": symbol_data.get("symbol"),
+                        "company_name": symbol_data.get("symbol_info"),
+                        "url": symbol_data.get("url"),
+                        "platform": "NSE",
+                        "nse_code": nse_code,
+                        "bse_code": None
+                    })
+
+    return company_list
+
+async def fetch_nse_exact_symbol_data(search):
+    company_list = []
+
+    timeout = aiohttp.ClientTimeout(total=10)
+
+    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+        async with session.get(
+                f"{url}",
+                params={"q": search},
+        ) as response:
+            if response.status != 200:
+                return company_list
+
+            data = await response.json()
+            if data.get("symbols", []):
+                symbol_data = next((item for item in data.get("symbols") if item["symbol"] == search), None)
+                nse_code = get_nse_code_from_angel(symbol_data)
                 company_list.append({
-                    "symbol": symbol_data.get("symbol"),
-                    "company_name": symbol_data.get("symbol_info"),
-                    "url": symbol_data.get("url"),
-                    "platform": "NSE",
-                    "nse_code": nse_code,
-                    "bse_code": None
-                })
+                        "symbol": symbol_data.get("symbol"),
+                        "company_name": symbol_data.get("symbol_info"),
+                        "url": symbol_data.get("url"),
+                        "platform": "NSE",
+                        "nse_code": nse_code,
+                        "bse_code": None
+                    })
 
     return company_list
 
