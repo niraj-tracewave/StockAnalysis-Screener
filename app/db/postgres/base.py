@@ -12,6 +12,11 @@ class Base(DeclarativeBase):
     def __tablename__(cls) -> str:  # type: ignore[override]
         return cls.__name__.lower()
 
+class ExternalBase(DeclarativeBase):
+    @declared_attr.directive
+    def __tablename__(cls) -> str:  # type: ignore[override]
+        return cls.__name__.lower()
+
 class BaseDBOperations:
     """
     Generic reusable class for all PostgreSQL DB operations.

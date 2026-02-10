@@ -6,7 +6,7 @@ from fastapi import Depends
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, selectinload
 
-from app.apis.deps import get_db
+from app.apis.deps import get_db, get_external_db
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
@@ -454,7 +454,7 @@ class CompanyStockFetchService:
     @staticmethod
     async def fetch_listed_company_detail(
             symbol,scrip,
-            db: Session = Depends(get_db)
+            db: Session = Depends(get_db), external_db: Session = Depends(get_external_db)
     ):
         try:
 
@@ -682,7 +682,8 @@ class CompanyStockFetchService:
                 "cash_flow": cash_flow,
                 "ratios": ratios,
                 "share_holding_pattern": share_holding_pattern,
-                "use_own_stock_socket": True
+                "use_own_stock_socket": True,
+                "is_following": True,
             }
 
             return CustomJSONResponse(
