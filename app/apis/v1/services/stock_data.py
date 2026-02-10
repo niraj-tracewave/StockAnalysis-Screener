@@ -11,8 +11,8 @@ from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDatas
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
 from app.core.custom_response import CustomJSONResponse
-from app.core.nse_search import fetch_nse_data, fetch_bse_data
-from app.core.utils import parse_qtr, parse_period_to_date, fetch_nse_scrip_code, fetch_top_50_company_from_nse, \
+from app.core.nse_search import fetch_bse_exact_symbol_data, fetch_nse_exact_symbol_data
+from app.core.utils import parse_qtr, parse_period_to_date, fetch_top_50_company_from_nse, \
     fetch_json_from_angle_one
 from app.db.postgres.base import BaseDBOperations
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
@@ -51,12 +51,12 @@ class CompanyStockFetchService:
                 data=None
             )
         roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
-        nse_company_list = await fetch_nse_data(search_request.symbol)
-        bse_company_list = await fetch_bse_data(search_request.symbol)
-        print(nse_company_list, bse_company_list)
+        nse_company_list = await fetch_nse_exact_symbol_data(search_request.symbol)
+        bse_company_list = await fetch_bse_exact_symbol_data(search_request.symbol)
         if nse_company_list and bse_company_list:
+            bse_code = bse_company_list[0].get("bse_code")
             nse_data = await main(symbol)
-            bse_data = await main_bse(scrip)
+            bse_data = await main_bse(bse_code)
             nse_symbol = nse_data.get('symbol')
             company_name = nse_data.get('companyName')
             header_data = bse_data.get('header')
@@ -80,8 +80,7 @@ class CompanyStockFetchService:
             sector = sec_info.get("sector")
             industry_info = sec_info.get("industryInfo")
             basic_industry = sec_info.get("basicIndustry")
-            bse_code = header_data.get("SecurityCode")
-            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+            nse_code = nse_company_list[0].get("nse_code")
         elif nse_company_list:
             nse_data = await main(symbol)
             nse_symbol = nse_data.get('symbol')
@@ -107,7 +106,7 @@ class CompanyStockFetchService:
             sector = sec_info.get("sector")
             industry_info = sec_info.get("industryInfo")
             basic_industry = sec_info.get("basicIndustry")
-            nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
+            nse_code = nse_company_list[0].get("nse_code")
         elif bse_company_list:
             security_code = bse_company_list[0].get("security_code")
             bse_data = await main_bse(security_code)
@@ -475,8 +474,8 @@ class CompanyStockFetchService:
 
             if not company:
                 roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
-                nse_company_list = await fetch_nse_data(symbol)
-                bse_company_list = await fetch_bse_data(symbol)
+                nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                bse_company_list = await fetch_bse_exact_symbol_data(symbol)
                 if nse_company_list and bse_company_list:
                     security_code = bse_company_list[0].get("bse_code")
                     nse_data = await main(symbol)
@@ -717,8 +716,8 @@ class CompanyStockFetchService:
                 await asyncio.sleep(300)
                 if not company:
                     roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
-                    nse_company_list = await fetch_nse_data(symbol)
-                    bse_company_list = await fetch_bse_data(symbol)
+                    nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                    bse_company_list = await fetch_bse_exact_symbol_data(symbol)
                     if nse_company_list and bse_company_list:
                         security_code = bse_company_list[0].get("bse_code")
                         nse_data = await main(symbol)
@@ -747,7 +746,7 @@ class CompanyStockFetchService:
                         industry_info = sec_info.get("industryInfo")
                         basic_industry = sec_info.get("basicIndustry")
                         bse_code = header_data.get("SecurityCode")
-                        nse_code = fetch_nse_scrip_code(nse_symbol, "NSE, BSE")
+                        nse_code = nse_company_list[0].get("nse_code")
                     elif nse_company_list:
                         nse_data = await main(symbol)
                         nse_symbol = nse_data.get('symbol')
@@ -773,7 +772,7 @@ class CompanyStockFetchService:
                         sector = sec_info.get("sector")
                         industry_info = sec_info.get("industryInfo")
                         basic_industry = sec_info.get("basicIndustry")
-                        nse_code = fetch_nse_scrip_code(nse_symbol, "NSE")
+                        nse_code = nse_company_list[0].get("nse_code")
                     elif bse_company_list:
                         security_code = bse_company_list[0].get("bse_code")
                         bse_data = await main_bse(security_code)
