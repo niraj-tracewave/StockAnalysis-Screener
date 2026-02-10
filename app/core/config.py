@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     ANGLE_ONE_CLIENT_CODE: str
     ANGLE_ONE_CLIENT_PASSWORD: str
     ANGLE_ONE_TOTP_SECRET: str
+    SCRAPINGBEE_API_KEY: str
 
     @property
     def database_url(self) -> str:

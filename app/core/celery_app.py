@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 celery_app = Celery(
     "company_tasks",
@@ -15,3 +16,11 @@ celery_app.conf.update(
 )
 
 celery_app.autodiscover_tasks(["app.tasks"])
+
+
+celery_app.conf.beat_schedule = {
+    "fetch-nse-company-data-every-30-minutes": {
+        "task": "fetch_and_store_company_data_from_top_50",
+        "schedule": crontab(minute="*/30"),
+    },
+}
