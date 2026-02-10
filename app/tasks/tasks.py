@@ -1,7 +1,9 @@
+import asyncio
+
+from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async
 from app.db.postgres.sync_session import SessionLocalSync
 from app.apis.models.company import Company
 from sqlalchemy.dialects.postgresql import insert
-
 from app.core.celery_app import celery_app
 
 
@@ -51,3 +53,15 @@ def store_company_data(nse_list : list, bse_list : list):
         raise
     finally:
         db.close()
+
+
+@celery_app.task(
+    name="fetch_and_store_company_data_from_top_50",
+)
+def fetch_and_store_company_data_from_top_50():
+    """
+    Background task to store NSE company data
+    """
+    from app.core.utils import load_angel_map
+    load_angel_map()
+    asyncio.run(fetch_and_store_company_data_from_top_50_async())

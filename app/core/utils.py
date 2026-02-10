@@ -1,15 +1,12 @@
 import calendar
-
 import aiohttp
 import pandas as pd
 import pyotp
 import uuid
 import base64
-
 import requests
-import json
-from app.core.config import get_settings
 
+from app.core.config import get_settings
 
 settings = get_settings()
 
@@ -241,3 +238,37 @@ async def fetch_json_from_angle_one():
     load_angel_map()
 
     print("JSON file saved successfully")
+
+import json
+
+def normalize_symbol(symbol):
+    if not symbol:
+        return None
+
+    # only process symbols like RELIANCE-EQ
+    if "-" in symbol:
+        return symbol.split("-")[0].strip()
+
+    # if already RELIANCE → skip
+    return None
+
+def filter_exchange_data_from_file(file_path):
+    """
+    Read JSON file and return filtered data where:
+    - exch_seg is NSE or BSE
+    - instrumenttype is empty
+    """
+    allowed_exchanges = {"NSE", "BSE"}
+
+    with open(file_path, "r") as f:
+        data = json.load(f)
+
+    filtered = [
+        normalize_symbol(item.get("symbol")) for item in data
+        if item.get("exch_seg") in allowed_exchanges
+        and item.get("instrumenttype") == ""
+    ]
+
+    filtered = list(set(filtered))
+
+    return filtered

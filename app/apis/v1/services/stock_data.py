@@ -15,6 +15,7 @@ from app.core.nse_search import fetch_bse_exact_symbol_data, fetch_nse_exact_sym
 from app.core.utils import parse_qtr, parse_period_to_date, fetch_top_50_company_from_nse, \
     fetch_json_from_angle_one
 from app.db.postgres.base import BaseDBOperations
+from app.tasks.tasks import fetch_and_store_company_data_from_top_50
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
 from scripts.nse import main
@@ -888,6 +889,16 @@ class CompanyStockFetchService:
     @staticmethod
     async def fetch_and_get_scrip_code_from_angle_one():
         await fetch_json_from_angle_one()
+        return CustomJSONResponse(
+            success=True,
+            message="Listed Company list fetched successfully.",
+            data={
+            }
+        )
+
+    @staticmethod
+    async def fetch_and_get_scrip_code_from_json_file():
+        fetch_and_store_company_data_from_top_50.delay()
         return CustomJSONResponse(
             success=True,
             message="Listed Company list fetched successfully.",

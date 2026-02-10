@@ -60,3 +60,7 @@ async def search_company(db: Session = Depends(get_db)):
 @router.get("/fetch-scrip-code", status_code=status.HTTP_200_OK)
 async def search_company():
     return await CompanyStockFetchService.fetch_and_get_scrip_code_from_angle_one()
+
+@router.get("/fetch-stock-data-in-background", status_code=status.HTTP_200_OK)
+async def search_company():
+    return await CompanyStockFetchService.fetch_and_get_scrip_code_from_json_file()
