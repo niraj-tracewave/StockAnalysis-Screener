@@ -1,4 +1,5 @@
 import calendar
+import os
 import aiohttp
 import pandas as pd
 import pyotp
@@ -272,3 +273,21 @@ def filter_exchange_data_from_file(file_path):
     filtered = list(set(filtered))
 
     return filtered
+
+async def fetch_symbols_from_covered_symbol_json():
+    file_path = "covered_symbols.json"
+    skipped_symbols = {}
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            old_skipped = set(data.get("skipped", []))
+
+            print(f"{len(skipped_symbols)} skipped from json")
+            return old_skipped
+
+        except Exception as e:
+            return {}
+    return {}
