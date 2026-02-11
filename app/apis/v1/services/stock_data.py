@@ -6,7 +6,8 @@ from fastapi import Depends
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, selectinload
 
-from app.apis.deps import get_db
+from app.apis.deps import get_db, get_external_db
+from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
@@ -453,8 +454,8 @@ class CompanyStockFetchService:
 
     @staticmethod
     async def fetch_listed_company_detail(
-            symbol,scrip,
-            db: Session = Depends(get_db)
+            symbol,scrip, current_user: int | None,
+            db: Session = Depends(get_db), external_db: Session = Depends(get_external_db),
     ):
         try:
 
@@ -635,6 +636,16 @@ class CompanyStockFetchService:
             company = result.scalars().first()
             details = company.details
 
+            is_following = False
+            if current_user:
+                follow_stmt = select(FollowUnfollowExternal.id).where(
+                    FollowUnfollowExternal.user_id == current_user,
+                    FollowUnfollowExternal.symbol == symbol
+                )
+
+                follow_result = await external_db.execute(follow_stmt)
+                is_following = follow_result.scalar() is not None
+
             one_month_charts = [
                 {
                     "metric": chart.metric,
@@ -682,7 +693,8 @@ class CompanyStockFetchService:
                 "cash_flow": cash_flow,
                 "ratios": ratios,
                 "share_holding_pattern": share_holding_pattern,
-                "use_own_stock_socket": True
+                "use_own_stock_socket": True,
+                "is_following": is_following,
             }
 
             return CustomJSONResponse(
