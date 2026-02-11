@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from datetime import datetime
 from itertools import islice
 
@@ -7,7 +8,7 @@ from sqlalchemy import select, or_
 
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data
-from app.core.utils import filter_exchange_data_from_file
+from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import main_fetch_stock_price_for_bse_graph
 from scripts.nse_stock_price_graph import main_fetch_stock_price_for_graph
@@ -24,7 +25,8 @@ async def fetch_and_store_company_data_from_top_50_async():
     try:
         file_path = 'OpenAPIScripMaster.json'
         all_filtered_data = filter_exchange_data_from_file(file_path)
-
+        processed_symbols = []
+        skipped_symbols = []
         def chunked(iterable, size):
             it = iter(iterable)
             while chunk := list(islice(it, size)):
@@ -39,6 +41,8 @@ async def fetch_and_store_company_data_from_top_50_async():
             result = db.execute(stmt)
             existing_symbols.update(row[0] for row in result)
 
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json()
+        existing_symbols.update(skipped_symbols_from_json)
         missing_symbols = [s for s in all_filtered_data if s not in existing_symbols]
 
         def chunk_list(data, size):
@@ -155,8 +159,10 @@ async def fetch_and_store_company_data_from_top_50_async():
                                 basic_industry = header_data.get("Industry")
                                 nse_code = None
                             else:
+                                skipped_symbols.append(symbol)
                                 continue
                             if isSuspended == "Suspended":
+                                skipped_symbols.append(symbol)
                                 continue
                             company_stock = CompanyStock(
                                 nse_symbol=symbol,
@@ -247,12 +253,35 @@ async def fetch_and_store_company_data_from_top_50_async():
                                         db.add(company_stock_chart_dataset_ops)
                                         db.flush()
 
+                            processed_symbols.append(symbol)
+
                 except Exception as symbol_error:
                     # db.rollback()
                     print(f"Error for symbol {symbol}: {symbol_error}")
                     continue
 
             db.commit()
+            file_path = "covered_symbols.json"
+
+            data = {
+                "processed": [],
+                "skipped": []
+            }
+
+            if os.path.exists(file_path):
+                with open(file_path, "r") as f:
+                    try:
+                        data = json.load(f)
+                    except:
+                        pass
+
+            data["processed"] = list(set(data.get("processed", []) + processed_symbols))
+            data["skipped"] = list(set(data.get("skipped", []) + skipped_symbols))
+
+            with open(file_path, "w") as f:
+                json.dump(data, f, indent=2)
+
+            print("Symbols appended to covered_symbols.json")
     except Exception as e:
         db.rollback()
         raise
