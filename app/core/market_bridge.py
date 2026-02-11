@@ -39,6 +39,7 @@ ANGEL_SYMBOLS = [
     {"exchangeType": 1, "token": "99926034", "name": "Nifty Div Opps 50"},
     {"exchangeType": 1, "token": "99926037", "name": "Nifty Fin Service"},
     {"exchangeType": 1, "token": "99926059", "name": "NIFTY ALPHA 50"},
+    {"exchangeType": 3, "token": "99919000", "name": "SENSEX"}
     # {"exchangeType": 13, "token": "1", "name": "USDINR"},
     # {"exchangeType": 13, "token": "25", "name": "EURINR"},
     # {"exchangeType": 13, "token": "26", "name": "GBPINR"},
