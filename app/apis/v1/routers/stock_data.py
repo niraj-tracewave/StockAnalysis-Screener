@@ -5,6 +5,7 @@ from starlette import status
 from app.apis.deps import get_db, get_external_db
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.apis.v1.services.stock_data import CompanyStockFetchService
+from app.core.security import optional_get_current_user
 
 router = APIRouter()
 @router.post("/fetch-company-data", status_code=status.HTTP_200_OK)
@@ -50,8 +51,13 @@ async def search_company( page: int = Query(1, ge=1),
     return await CompanyStockFetchService.fetch_listed_companies(page, page_size, db)
 
 @router.get("/list-of-listed-company-detail/{symbol}/", status_code=status.HTTP_200_OK)
-async def search_company( symbol: str, scrip: str | None = None, db: Session = Depends(get_db), external_db: Session = Depends(get_external_db)):
-    return await CompanyStockFetchService.fetch_listed_company_detail(symbol, scrip, db, external_db)
+async def search_company( symbol: str,
+                          scrip: str | None = None,
+                          current_user: int | None = Depends(optional_get_current_user),
+                          db: Session = Depends(get_db),
+                          external_db: Session = Depends(get_external_db),
+                          ):
+    return await CompanyStockFetchService.fetch_listed_company_detail(symbol, scrip, current_user, db, external_db)
 
 @router.get("/fetch-top-50-nse-data", status_code=status.HTTP_200_OK)
 async def search_company(db: Session = Depends(get_db)):

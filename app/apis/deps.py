@@ -10,5 +10,5 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 async def get_external_db() -> AsyncGenerator[AsyncSession, None]:
-    async for session in external_db_session_factory():
+    async with external_db_session_factory() as session:
         yield session
