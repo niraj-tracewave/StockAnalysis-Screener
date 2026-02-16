@@ -20,8 +20,7 @@ class UsersService:
     async def login(login_request: UserLoginSchema):
         otp, secret = await generate_otp(login_request.model_dump())
         await send_otp(otp, secret, login_request.model_dump())
-        return CustomJSONResponse(
-            success=True,
+        return CustomJSONResponse.custom_response(
             message="Otp sent successfully.",
             data={"otp": otp, "secret": secret}
         )
@@ -53,8 +52,7 @@ class UsersService:
         user_data = jsonable_encoder({k: v for k, v in user.__dict__.items() if k not in ("_sa_instance_state", "created_at")})
         user_data['access_token'] = access_token_data
         user_data['refresh_token'] = refresh_token_data
-        return CustomJSONResponse(
-                success=True,
+        return CustomJSONResponse.custom_response(
                 message="Login successfully.",
                 data=user_data
             )
@@ -63,8 +61,7 @@ class UsersService:
     async def generate_access_token(refresh_token_request: RefreshTokenSchema):
         access_token_data = jwt_handler.generate_access_token_from_refresh(refresh_token_request.refresh_token)
 
-        return CustomJSONResponse(
-            success=True,
+        return CustomJSONResponse.custom_response(
             message="Login successfully.",
             data={
                 "access_token": access_token_data,

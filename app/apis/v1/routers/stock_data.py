@@ -70,3 +70,10 @@ async def search_company():
 @router.get("/fetch-stock-data-in-background", status_code=status.HTTP_200_OK)
 async def search_company():
     return await CompanyStockFetchService.fetch_and_get_scrip_code_from_json_file()
+
+@router.get("/retrieve-stock-chart-data/{symbol}/", status_code=status.HTTP_200_OK)
+async def search_company(symbol: str, days: str,
+                          scrip: str | None = None,
+                          db: Session = Depends(get_db),
+                          ):
+    return await CompanyStockFetchService.fetch_listed_company_chart_data(symbol, days, scrip, db)
