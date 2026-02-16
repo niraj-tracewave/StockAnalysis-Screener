@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.apis.models.company import Company
 from app.apis.v1.schemas.follow_unfollow_company import SearchCompanySchema
+from app.core.custom_error_response import CustomValidationError
 from app.core.custom_response import CustomJSONResponse
 from app.core.jwt_authentication import JWTBearer
 from app.core.nse_search import fetch_nse_data, fetch_bse_data
@@ -48,15 +49,11 @@ class FollowUnfollowCompanyService:
                 bse_company_list = await fetch_bse_data(search_request.search)
                 store_company_data.delay(nse_company_list, bse_company_list)
                 company_data = nse_company_list + bse_company_list
-            return CustomJSONResponse(
-                success=True,
+            return CustomJSONResponse.custom_response(
                 message="Company list fetched successfully.",
                 data={"data": company_data}
             )
         except Exception as e:
-            return CustomJSONResponse(
-                success=False,
-                message=str(e),
-                data={"data": []},
-                status_code=500
+            raise CustomValidationError(
+                {"error": [str(e)]}, 200
             )

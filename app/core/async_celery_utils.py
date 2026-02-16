@@ -204,28 +204,30 @@ async def fetch_and_store_company_data_from_top_50_async():
                                     nse_data = await main_fetch_stock_price_for_graph(symbol, days)
                                     chart = nse_data.get('chart')
                                     # company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
-                                    company_stock_chart_dataset_ops = ChartDataset(
-                                        metric="Price",
-                                        label="Price on NSE",
-                                        meta={"days": days},
-                                        company_id=company_stock.id,
-                                        values=chart.get("grapthData"),
-                                    )
-                                    db.add(company_stock_chart_dataset_ops)
-                                    db.flush()
+                                    if chart:
+                                        company_stock_chart_dataset_ops = ChartDataset(
+                                            metric="Price",
+                                            label="Price on NSE",
+                                            meta={"days": days},
+                                            company_id=company_stock.id,
+                                            values=chart.get("grapthData"),
+                                        )
+                                        db.add(company_stock_chart_dataset_ops)
+                                        db.flush()
                             elif nse_company_list:
                                 for days in days_list:
                                     nse_data = await main_fetch_stock_price_for_graph(symbol, days)
                                     chart = nse_data.get('chart')
-                                    company_stock_chart_dataset_ops = ChartDataset(
-                                        metric="Price",
-                                        label="Price on NSE",
-                                        meta={"days": days},
-                                        company_id=company_stock.id,
-                                        values=chart.get("grapthData"),
-                                    )
-                                    db.add(company_stock_chart_dataset_ops)
-                                    db.flush()
+                                    if chart:
+                                        company_stock_chart_dataset_ops = ChartDataset(
+                                            metric="Price",
+                                            label="Price on NSE",
+                                            meta={"days": days},
+                                            company_id=company_stock.id,
+                                            values=chart.get("grapthData"),
+                                        )
+                                        db.add(company_stock_chart_dataset_ops)
+                                        db.flush()
                             elif bse_company_list:
                                 # days_list = ["1M", "1Y", "5Y", "10Y"]
                                 security_code = bse_company_list[0].get("bse_code")
@@ -233,25 +235,26 @@ async def fetch_and_store_company_data_from_top_50_async():
                                 for days in days_list:
                                     bse_data = await main_fetch_stock_price_for_bse_graph(security_code, days)
                                     script_header = bse_data.get('scriptHeader')
-                                    data_list = json.loads(script_header.get("Data"))
-                                    result = []
+                                    if script_header:
+                                        data_list = json.loads(script_header.get("Data"))
+                                        result = []
 
-                                    for item in data_list:
-                                        ts_ms = int(
-                                            datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
-                                        )
-                                        price = float(item["vale1"])
-                                        result.append([ts_ms, price])
+                                        for item in data_list:
+                                            ts_ms = int(
+                                                datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
+                                            )
+                                            price = float(item["vale1"])
+                                            result.append([ts_ms, price])
 
-                                        company_stock_chart_dataset_ops = ChartDataset(
-                                            metric="Price",
-                                            label="Price on BSE",
-                                            meta={"days": days},
-                                            company_id=company_stock.id,
-                                            values=result,
-                                        )
-                                        db.add(company_stock_chart_dataset_ops)
-                                        db.flush()
+                                            company_stock_chart_dataset_ops = ChartDataset(
+                                                metric="Price",
+                                                label="Price on BSE",
+                                                meta={"days": days},
+                                                company_id=company_stock.id,
+                                                values=result,
+                                            )
+                                            db.add(company_stock_chart_dataset_ops)
+                                            db.flush()
 
                             processed_symbols.append(symbol)
 
