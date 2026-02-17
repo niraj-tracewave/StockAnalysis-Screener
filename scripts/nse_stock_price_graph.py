@@ -115,3 +115,40 @@ async def main_fetch_stock_price_for_graph(symbol, days):
 
     await c.close()
     return data
+
+
+
+import aiohttp
+
+url = "https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi"
+headers = {
+    "authority": "www.nseindia.com",
+    "method": "GET",
+    "scheme": "https",
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "if-none-match": "\"dus2ivngaa48k4\"",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Linux\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+}
+
+
+
+async def fetch_data(days, identifier, symbol, cname):
+    original_url = f"{url}?functionName=getSymbolChartData&symbol={identifier}&days={days}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(original_url, headers={**headers, "path": f"/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolChartData&symbol=TCSEQN&days=30Y",
+                                                      "referer": f"https://www.nseindia.com/get-quote/equity/{symbol}/{cname}"}) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data
+
+async def new_main_fetch_stock_price_for_graph(days, identifier, symbol, cname):
+    data = await fetch_data(days, identifier, symbol, cname)
+    return data

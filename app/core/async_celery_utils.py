@@ -10,8 +10,9 @@ from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDatas
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data
 from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json
 from app.db.postgres.sync_session import SessionLocalSync
-from scripts.bse_stock_price_graph import main_fetch_stock_price_for_bse_graph
-from scripts.nse_stock_price_graph import main_fetch_stock_price_for_graph
+from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
+from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
+from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
 from scripts.nse_with_rotating_ip import main
 from scripts.bse import main as main_bse
 
@@ -102,6 +103,9 @@ async def fetch_and_store_company_data_from_top_50_async():
                                 isSuspended = sec_info.get("isSuspended")
                                 bse_code = header_data.get("SecurityCode")
                                 nse_code = nse_company_list[0].get("nse_code")
+                                series = nse_metadata.get("series")
+                                symbol_type = sec_info.get("classShare")
+                                identifier = nse_metadata.get("identifier")
                             elif nse_company_list:
                                 nse_data = await main(symbol)
                                 nse_symbol = nse_data.get('symbol')
@@ -129,6 +133,9 @@ async def fetch_and_store_company_data_from_top_50_async():
                                 basic_industry = sec_info.get("basicIndustry")
                                 nse_code = nse_company_list[0].get("nse_code")
                                 isSuspended = sec_info.get("isSuspended")
+                                series = nse_metadata.get("series")
+                                symbol_type = sec_info.get("classShare")
+                                identifier = nse_metadata.get("identifier")
                             elif bse_company_list:
                                 security_code = bse_company_list[0].get("bse_code")
                                 bse_data = await main_bse(security_code)
@@ -196,65 +203,89 @@ async def fetch_and_store_company_data_from_top_50_async():
                             fields = ["id"]
 
                             attrs = [getattr(CompanyStock, f) for f in fields]
-                            days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
+                            # days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
+                            days_list = ["30Y"]
                             # days_list = ["1W", "1D", "1M"]
                             if nse_company_list and bse_company_list:
-                                security_code = bse_company_list[0].get("bse_code")
+                                volume_data = await main_fetch_volume_from_nse(nse_code,
+                                                                               f"{symbol}-{series}", symbol_type)
                                 for days in days_list:
-                                    nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                                    chart = nse_data.get('chart')
-                                    # company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
+                                    company_name_with_dash = company_name.replace(" ", "-")
+                                    nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                                    chart = nse_data.get('grapthData')
                                     if chart:
+                                        volume_map = {item["time"]: item["volume"] for item in
+                                                      volume_data.get("data", None)}
+                                        updated_data = []
+                                        for row in chart:
+                                            time = row[0]
+                                            volume = volume_map.get(time, None)
+                                            updated_row = row + [volume]
+                                            updated_data.append(updated_row)
                                         company_stock_chart_dataset_ops = ChartDataset(
-                                            metric="Price",
-                                            label="Price on NSE",
-                                            meta={"days": days},
-                                            company_id=company_stock.id,
-                                            values=chart.get("grapthData"),
-                                        )
+                                                    metric="Price",
+                                                    label="Price on NSE",
+                                                    meta={"days": days},
+                                                    company_id=company_stock.id,
+                                                    values=updated_data,
+                                                )
                                         db.add(company_stock_chart_dataset_ops)
                                         db.flush()
                             elif nse_company_list:
+                                volume_data = await main_fetch_volume_from_nse(nse_code,
+                                                                               f"{symbol}-{series}",
+                                                                               symbol_type)
                                 for days in days_list:
-                                    nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                                    chart = nse_data.get('chart')
+                                    company_name_with_dash = company_name.replace(" ", "-")
+                                    nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                                    chart = nse_data.get('grapthData')
                                     if chart:
+                                        volume_map = {item["time"]: item["volume"] for item in
+                                                      volume_data.get("data", None)}
+                                        updated_data = []
+                                        for row in chart:
+                                            time = row[0]
+                                            volume = volume_map.get(time, None)
+                                            updated_row = row + [volume]
+                                            updated_data.append(updated_row)
                                         company_stock_chart_dataset_ops = ChartDataset(
                                             metric="Price",
                                             label="Price on NSE",
                                             meta={"days": days},
                                             company_id=company_stock.id,
-                                            values=chart.get("grapthData"),
+                                            values=updated_data,
                                         )
                                         db.add(company_stock_chart_dataset_ops)
                                         db.flush()
                             elif bse_company_list:
                                 # days_list = ["1M", "1Y", "5Y", "10Y"]
                                 security_code = bse_company_list[0].get("bse_code")
-                                days_list = ["1W", "1Y", "5Y"]
+                                days_list = ["30Y"]
                                 for days in days_list:
-                                    bse_data = await main_fetch_stock_price_for_bse_graph(security_code, days)
-                                    script_header = bse_data.get('scriptHeader')
+                                    bse_data = await new_main_fetch_stock_price_for_bse_graph(security_code)
+                                    script_header = bse_data.get('Data')
                                     if script_header:
-                                        data_list = json.loads(script_header.get("Data"))
+                                        data_list = json.loads(script_header)
                                         result = []
 
                                         for item in data_list:
                                             ts_ms = int(
-                                                datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
+                                                datetime.strptime(item["dttm"],
+                                                                  "%a %b %d %Y %H:%M:%S").timestamp() * 1000
                                             )
                                             price = float(item["vale1"])
-                                            result.append([ts_ms, price])
+                                            volume = int(item["vole"])
+                                            result.append([ts_ms, price, "", None, None, volume])
 
-                                            company_stock_chart_dataset_ops = ChartDataset(
-                                                metric="Price",
-                                                label="Price on BSE",
-                                                meta={"days": days},
-                                                company_id=company_stock.id,
-                                                values=result,
-                                            )
-                                            db.add(company_stock_chart_dataset_ops)
-                                            db.flush()
+                                        company_stock_chart_dataset_ops = ChartDataset(
+                                            metric="Price",
+                                            label="Price on BSE",
+                                            meta={"days": days},
+                                            company_id=company_stock.id,
+                                            values=result,
+                                        )
+                                        db.add(company_stock_chart_dataset_ops)
+                                        db.flush()
 
                             processed_symbols.append(symbol)
 

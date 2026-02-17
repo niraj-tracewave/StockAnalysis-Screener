@@ -685,3 +685,17 @@ EXCHANGE_TYPE_MAP = {
     7: "ncx_fo",   # NCDEX
     13: "cde_fo",  # CDS (Currency Derivatives)
 }
+
+
+YEAR_OR_MONTY_TO_DAYS_MAP = {
+  "1M": 30,
+  "6M": 180,
+  "1Y": 365,
+  "1W": 7,
+  "5Y": 1825,
+  "10Y": 3650,
+  "15Y": 5475,
+  "20Y": 7300,
+  "25Y": 9125,
+  "30Y": 10950,
+}
