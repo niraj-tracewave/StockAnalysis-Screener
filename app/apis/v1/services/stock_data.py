@@ -10,7 +10,8 @@ from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
-from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern
+from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
+    YEAR_OR_MONTY_TO_DAYS_MAP
 from app.core.custom_error_response import CustomValidationError
 from app.core.custom_response import CustomJSONResponse
 from app.core.nse_search import fetch_bse_exact_symbol_data, fetch_nse_exact_symbol_data
@@ -20,10 +21,11 @@ from app.db.postgres.base import BaseDBOperations
 from app.tasks.tasks import fetch_and_store_company_data_from_top_50
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
+from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse import main
 from scripts.bse import main as main_bse
-from scripts.nse_stock_price_graph import main_fetch_stock_price_for_graph
-from scripts.bse_stock_price_graph import main_fetch_stock_price_for_bse_graph
+from scripts.nse_stock_price_graph import main_fetch_stock_price_for_graph, new_main_fetch_stock_price_for_graph
+from scripts.bse_stock_price_graph import main_fetch_stock_price_for_bse_graph, new_main_fetch_stock_price_for_bse_graph
 
 
 class CompanyStockFetchService:
@@ -464,7 +466,7 @@ class CompanyStockFetchService:
             company = result.scalars().first()
 
             if not company:
-                roe = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
+                roe = series = symbol_type = identifier = current_price = high_price = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
                 nse_company_list = await fetch_nse_exact_symbol_data(symbol)
                 bse_company_list = await fetch_bse_exact_symbol_data(symbol)
                 if nse_company_list and bse_company_list:
@@ -496,6 +498,9 @@ class CompanyStockFetchService:
                     basic_industry = sec_info.get("basicIndustry")
                     bse_code = header_data.get("SecurityCode")
                     nse_code = nse_company_list[0].get("nse_code")
+                    series = nse_metadata.get("series")
+                    symbol_type = sec_info.get("classShare")
+                    identifier = nse_metadata.get("identifier")
                 elif nse_company_list:
                     nse_data = await main(symbol)
                     nse_symbol = nse_data.get('symbol')
@@ -522,6 +527,9 @@ class CompanyStockFetchService:
                     industry_info = sec_info.get("industryInfo")
                     basic_industry = sec_info.get("basicIndustry")
                     nse_code = nse_company_list[0].get("nse_code")
+                    series = nse_metadata.get("series")
+                    symbol_type = sec_info.get("classShare")
+                    identifier = nse_metadata.get("identifier")
                 elif bse_company_list:
                     security_code = bse_company_list[0].get("bse_code")
                     bse_data = await main_bse(security_code)
@@ -571,48 +579,62 @@ class CompanyStockFetchService:
                 fields = ["id"]
 
                 attrs = [getattr(CompanyStock, f) for f in fields]
-                # days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y", "30Y"]
-                days_list = ["1W", "1D", "1M", "1Y", "5Y", "10Y", "15Y"]
+                days_list = ["30Y"]
                 if nse_company_list and bse_company_list:
                     security_code = bse_company_list[0].get("bse_code")
                     company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                         attrs, nse_symbol=symbol, bse_code=security_code
                     )
+                    volume_data = await main_fetch_volume_from_nse(company_stock_data_db.nse_code, f"{symbol}-{series}", symbol_type)
                     for days in days_list:
-                        await asyncio.sleep(4)
-                        nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                        chart = nse_data.get('chart')
+                        company_name_with_dash = company_name.replace(" ", "-")
+                        nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                        chart = nse_data.get('grapthData')
                         if chart:
+                            volume_map = {item["time"]: item["volume"] for item in volume_data.get("data", None)}
+                            updated_data = []
+                            for row in chart:
+                                time = row[0]
+                                volume = volume_map.get(time, None)
+                                updated_row = row + [volume]
+                                updated_data.append(updated_row)
                             company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                             company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
                                 {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
-                                 "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                                 "values": updated_data, "company_id": company_stock_data_db.id})
                 elif nse_company_list:
                     company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                         attrs, nse_symbol=symbol
                     )
+                    volume_data = await main_fetch_volume_from_nse(company_stock_data_db.nse_code, f"{symbol}-{series}",
+                                                                   symbol_type)
                     for days in days_list:
-                        await asyncio.sleep(4)
-                        nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                        chart = nse_data.get('chart')
+                        company_name_with_dash = company_name.replace(" ", "-")
+                        nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                        chart = nse_data.get('grapthData')
                         if chart:
+                            volume_map = {item["time"]: item["volume"] for item in volume_data.get("data", None)}
+                            updated_data = []
+                            for row in chart:
+                                time = row[0]
+                                volume = volume_map.get(time, None)
+                                updated_row = row + [volume]
+                                updated_data.append(updated_row)
                             company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                             company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
                                 {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
-                                 "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                                 "values": updated_data, "company_id": company_stock_data_db.id})
                 elif bse_company_list:
-                    # days_list = ["1M", "1Y", "5Y", "10Y"]
                     security_code = bse_company_list[0].get("bse_code")
-                    days_list = ["1D","5D", "1M", "3M", "6M", "1Y"]
+                    days_list = ["30Y"]
                     company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                         attrs, bse_code=security_code
                     )
                     for days in days_list:
-                        await asyncio.sleep(4)
-                        bse_data = await main_fetch_stock_price_for_bse_graph(security_code, days)
-                        script_header = bse_data.get('scriptHeader')
+                        bse_data = await new_main_fetch_stock_price_for_bse_graph(security_code)
+                        script_header = bse_data.get('Data')
                         if script_header:
-                            data_list = json.loads(script_header.get("Data"))
+                            data_list = json.loads(script_header)
                             result = []
 
                             for item in data_list:
@@ -620,7 +642,8 @@ class CompanyStockFetchService:
                                     datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
                                 )
                                 price = float(item["vale1"])
-                                result.append([ts_ms, price])
+                                volume = int(item["vole"])
+                                result.append([ts_ms, price, "", None, None, volume])
 
                             company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                             company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
@@ -641,16 +664,18 @@ class CompanyStockFetchService:
                 follow_result = await external_db.execute(follow_stmt)
                 is_following = follow_result.scalar() is not None
 
-            one_month_charts = [
-                {
-                    "metric": chart.metric,
-                    "label": chart.label,
-                    "values": chart.values,
-                    "meta": chart.meta,
-                }
-                for chart in company.charts
-                if chart.meta and chart.meta.get("days") == "1M"
-            ]
+            one_month_charts = []
+            for chart in company.charts:
+                if chart.meta and chart.meta.get("days") == "30Y":
+                    values = chart.values
+                    filtered_values = values[0:30]
+
+                    one_month_charts.append({
+                        "metric": chart.metric,
+                        "label": chart.label,
+                        "values": filtered_values,
+                        "meta": {**chart.meta, "days": "1M"}
+                    })
 
             response = {
                 "id": company.id,
@@ -933,64 +958,104 @@ class CompanyStockFetchService:
             if company:
                 chart_stmt = select(ChartDataset).where(
                     ChartDataset.company_id == company.id,
-                    ChartDataset.meta["days"].astext == days
+                    ChartDataset.meta["days"].astext == "30Y"
                 )
 
                 chart_result = await db.execute(chart_stmt)
                 charts = chart_result.scalars().all()
-                chart_data = [
-                    {
-                        "metric": c.metric,
-                        "label": c.label,
-                        "values": c.values,
-                        "meta": c.meta,
-                    }
-                    for c in charts
-                ]
+                chart_data = []
+                for chart in charts:
+                    if chart.meta and chart.meta.get("days") == "30Y":
+                        values = chart.values
+                        day_count = YEAR_OR_MONTY_TO_DAYS_MAP.get(days)
+                        filtered_values = values[0:day_count]
+
+                        chart_data.append({
+                            "metric": chart.metric,
+                            "label": chart.label,
+                            "values": filtered_values,
+                            "meta": {**chart.meta, "days": days}
+                        })
                 if not chart_data:
+                    series = symbol_type = identifier = None
+                    if company.nse_code and company.bse_code:
+                        nse_data = await main(symbol)
+                        symbol_data = nse_data.get('symbolData')
+                        equity_response = symbol_data.get('equityResponse')[0]
+                        nse_metadata = equity_response.get('metaData')
+                        sec_info = equity_response.get('secInfo')
+                        series = nse_metadata.get("series")
+                        symbol_type = sec_info.get("classShare")
+                        identifier = nse_metadata.get("identifier")
+                    elif company.nse_code:
+                        nse_data = await main(symbol)
+                        symbol_data = nse_data.get('symbolData')
+                        equity_response = symbol_data.get('equityResponse')[0]
+                        nse_metadata = equity_response.get('metaData')
+                        sec_info = equity_response.get('secInfo')
+                        series = nse_metadata.get("series")
+                        symbol_type = sec_info.get("classShare")
+                        identifier = nse_metadata.get("identifier")
                     company_stock_ops = BaseDBOperations(db, CompanyStock)
                     fields = ["id"]
 
                     attrs = [getattr(CompanyStock, f) for f in fields]
-                    days_list = [days]
+                    days_list = ["30Y"]
                     if company.nse_code and company.bse_code:
                         company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                             attrs, nse_symbol=symbol, bse_code=company.bse_code
                         )
+                        volume_data = await main_fetch_volume_from_nse(company_stock_data_db.nse_code,
+                                                                       f"{symbol}-{series}", symbol_type)
                         for days in days_list:
-                            await asyncio.sleep(4)
-                            nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                            chart = nse_data.get('chart')
+                            company_name_with_dash = company.name.replace(" ", "-")
+                            nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                            chart = nse_data.get('grapthData')
                             if chart:
+                                volume_map = {item["time"]: item["volume"] for item in volume_data.get("data", None)}
+                                updated_data = []
+                                for row in chart:
+                                    time = row[0]
+                                    volume = volume_map.get(time, None)
+                                    updated_row = row + [volume]
+                                    updated_data.append(updated_row)
                                 company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                                 company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
                                     {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
-                                     "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                                     "values": updated_data, "company_id": company_stock_data_db.id})
                     elif company.nse_code:
                         company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                             attrs, nse_symbol=symbol
                         )
+                        volume_data = await main_fetch_volume_from_nse(company_stock_data_db.nse_code,
+                                                                       f"{symbol}-{series}",
+                                                                       symbol_type)
                         for days in days_list:
-                            await asyncio.sleep(4)
-                            nse_data = await main_fetch_stock_price_for_graph(symbol, days)
-                            chart = nse_data.get('chart')
+                            company_name_with_dash = company.name.replace(" ", "-")
+                            nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
+                            chart = nse_data.get('grapthData')
                             if chart:
+                                volume_map = {item["time"]: item["volume"] for item in volume_data.get("data", None)}
+                                updated_data = []
+                                for row in chart:
+                                    time = row[0]
+                                    volume = volume_map.get(time, None)
+                                    updated_row = row + [volume]
+                                    updated_data.append(updated_row)
                                 company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                                 company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
                                     {'metric': "Price", 'label': "Price on NSE", "meta": {"days": days},
-                                     "values": chart.get("grapthData"), "company_id": company_stock_data_db.id})
+                                     "values": updated_data, "company_id": company_stock_data_db.id})
                     elif company.bse_code:
-                        # days_list = ["1M", "1Y", "5Y", "10Y"]
-                        days_list = ["1D", "5D", "1M", "3M", "6M", "1Y"]
+                        days_list = ["30Y"]
                         company_stock_data_db = await company_stock_ops.retrieve_selected_columns(
                             attrs, bse_code=company.bse_code
                         )
                         for days in days_list:
-                            await asyncio.sleep(4)
-                            bse_data = await main_fetch_stock_price_for_bse_graph(company.bse_code, days)
-                            script_header = bse_data.get('scriptHeader')
+                            bse_data = await new_main_fetch_stock_price_for_bse_graph(company.bse_code)
+                            script_header = bse_data.get('Data')
                             if script_header:
-                                data_list = json.loads(script_header.get("Data"))
+                                data_list = json.loads(script_header)
                                 result = []
 
                                 for item in data_list:
@@ -998,30 +1063,35 @@ class CompanyStockFetchService:
                                         datetime.strptime(item["dttm"], "%a %b %d %Y %H:%M:%S").timestamp() * 1000
                                     )
                                     price = float(item["vale1"])
-                                    result.append([ts_ms, price])
+                                    volume = int(item["vole"])
+                                    result.append([ts_ms, price, "", None, None, volume])
 
                                 company_stock_chart_dataset_ops = BaseDBOperations(db, ChartDataset)
                                 company_stock_chart_dataset_db = await company_stock_chart_dataset_ops.create(
-                                    {'metric': "Price", 'label': "Price on BSE", "meta": {"days": days}, "values": result,
+                                    {'metric': "Price", 'label': "Price on BSE", "meta": {"days": days},
+                                     "values": result,
                                      "company_id": company_stock_data_db.id})
 
                     chart_stmt = select(ChartDataset).where(
                         ChartDataset.company_id == company.id,
-                        ChartDataset.meta["days"].astext == days
+                        ChartDataset.meta["days"].astext == "30Y"
                     )
 
                     chart_result = await db.execute(chart_stmt)
                     charts = chart_result.scalars().all()
-                    chart_data = [
-                        {
-                            "metric": c.metric,
-                            "label": c.label,
-                            "values": c.values,
-                            "meta": c.meta,
-                        }
-                        for c in charts
-                    ]
+                    chart_data = []
+                    for chart in charts:
+                        if chart.meta and chart.meta.get("days") == "30Y":
+                            values = chart.values
+                            day_count = YEAR_OR_MONTY_TO_DAYS_MAP.get(days)
+                            filtered_values = values[0:day_count]
 
+                            chart_data.append({
+                                "metric": chart.metric,
+                                "label": chart.label,
+                                "values": filtered_values,
+                                "meta": {**chart.meta, "days": days}
+                            })
             return CustomJSONResponse.custom_response(
                 message="Company chart data fetched successfully",
                 data=chart_data
