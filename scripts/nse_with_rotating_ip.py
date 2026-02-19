@@ -393,8 +393,9 @@ class FastNSEClient:
     async def full(self, symbol: str):
         meta = await self.m(symbol)
         series = meta.get("activeSeries", ["EQ"])[0]
+        marketType = meta.get("marketType", "N")
 
-        symbol_data = await self.sd(symbol, series)
+        symbol_data = await self.sd(symbol, series, marketType)
         identifier = symbol_data["equityResponse"][0]["metaData"]["identifier"]
 
         async with asyncio.TaskGroup() as tg:

@@ -3,7 +3,6 @@ from lxml import etree
 
 async def fetch_shareholding_statements(url: str):
     main_url = f"https://www.bseindia.com/{url}"
-    print(main_url)
     headers = {
             "authority": "www.bseindia.com",
             "method": "GET",
