@@ -33,7 +33,7 @@ class FastNSEClient:
             headers={
                 "User-Agent":
                     "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 "
+                    "AppleWebKit/537.36"
                     "(KHTML, like Gecko) Chrome/141 Safari/537.36",
                 "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
@@ -121,28 +121,36 @@ class FastNSEClient:
             "noOfRecords": 4
         }, safe=True)
 
+    async def safe_call(self, coro, name):
+        try:
+            return await coro
+        except Exception as e:
+            print(f"{name} failed:", e)
+            return None
+
     # --- MASTER FAST FETCH ---
     async def full(self, symbol: str):
         meta = await self.m(symbol)
         series = meta.get("activeSeries", ["EQ"])[0]
+        marketType = meta.get("marketType", "N")
 
         # Parallel getSymbolData + next requests
-        symbol_data = await self.sd(symbol, series)
+        symbol_data = await self.sd(symbol, series, marketType)
         identifier = symbol_data["equityResponse"][0]["metaData"]["identifier"]
 
         # Fire all in parallel using TaskGroup (faster than asyncio.gather)
         async with asyncio.TaskGroup() as tg:
-            t_name = tg.create_task(self.n(symbol))
-            t_reg = tg.create_task(self.reg(symbol, series))
-            t_chart = tg.create_task(self.chart(identifier))
-            t_year = tg.create_task(self.yr(identifier))
-            t_idx = tg.create_task(self.idx(symbol))
-            t_ann = tg.create_task(self.ann(symbol))
-            t_brs = tg.create_task(self.brs(symbol))
-            t_ar = tg.create_task(self.ar(symbol))
-            t_shp = tg.create_task(self.shp(symbol))
-            t_fin = tg.create_task(self.fin(symbol))
-            t_board = tg.create_task(self.board(symbol))
+            t_name = tg.create_task(self.safe_call(self.n(symbol), "n"))
+            t_reg = tg.create_task(self.safe_call(self.reg(symbol, series), "reg"))
+            t_chart = tg.create_task(self.safe_call(self.chart(identifier), "chart"))
+            t_year = tg.create_task(self.safe_call(self.yr(identifier), "yr"))
+            t_idx = tg.create_task(self.safe_call(self.idx(symbol), "idx"))
+            t_ann = tg.create_task(self.safe_call(self.ann(symbol), "ann"))
+            t_brs = tg.create_task(self.safe_call(self.brs(symbol), "brs"))
+            t_ar = tg.create_task(self.safe_call(self.ar(symbol), "ar"))
+            t_shp = tg.create_task(self.safe_call(self.shp(symbol), "shp"))
+            t_fin = tg.create_task(self.safe_call(self.fin(symbol), "fin"))
+            t_board = tg.create_task(self.safe_call(self.board(symbol), "board"))
 
         return {
             "symbol": symbol,
