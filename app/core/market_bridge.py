@@ -13,7 +13,7 @@ from app.apis.v1.websockets.manager import manager
 # # angel.connect()
 
 # from app.core.angel_container import angel
-from app.core.angel_container import angel_container
+# from app.core.angel_container import angel_container
 
 
 def on_tick(symbol, data):
@@ -61,22 +61,23 @@ def build_token_list():
 
 
 def unsubscribe_all():
-    # global subscribed
-    # if not subscribed:
-    #     return
-
-    req = {
-        "correlationID": "batch_unsub",
-        "action": 0,
-        "params": {
-            "mode": 3,
-            "tokenList": build_token_list(),
-        },
-    }
-
-    angel_container.angel.ws.send(json.dumps(req))
-    # subscribed = False
-    print("❌ Angel batch unsubscribed")
+    pass
+#     # global subscribed
+#     # if not subscribed:
+#     #     return
+#
+#     req = {
+#         "correlationID": "batch_unsub",
+#         "action": 0,
+#         "params": {
+#             "mode": 3,
+#             "tokenList": build_token_list(),
+#         },
+#     }
+#
+#     angel_container.angel.ws.send(json.dumps(req))
+#     # subscribed = False
+#     print("❌ Angel batch unsubscribed")
 
 # def subscribe_all():
 #     # global subscribed
