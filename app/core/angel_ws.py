@@ -102,20 +102,241 @@ from app.apis.v1.websockets.manager import manager
 from app.db.redis.redis import redis_client
 
 
+# class AngelWSClient:
+#     def __init__(self, client_id, access_token, api_key, feed_token, auto_login):
+#         self.client_id = client_id
+#         self.access_token = access_token
+#         self.feed_token = feed_token
+#         self.api_key = api_key
+#         self.ws = None
+#         self.auto_login = auto_login  # AngelAutoLogin instance
+#         self.reconnecting = False
+#
+#     def subscribe_all(self):
+#         from app.core.market_bridge import build_token_list
+#
+#         if not self.ws or not self.ws.sock or not self.ws.sock.connected:
+#             return
+#
+#         req = {
+#             "correlationID": "batch_sub",
+#             "action": 1,
+#             "params": {
+#                 "mode": 3,
+#                 "tokenList": build_token_list(),
+#             },
+#         }
+#
+#         self.ws.send(json.dumps(req))
+#         print("✅ Angel batch subscribed")
+#
+#     def connect(self):
+#         try:
+#             url = (
+#                 "wss://smartapisocket.angelone.in/smart-stream"
+#                 f"?client_id={self.client_id}"
+#                 f"&token={self.feed_token}"
+#                 f"&api_key={self.api_key}"
+#             )
+#             headers = {
+#                             "Content-Type": "application/json",
+#                             "Authorization": f"Bearer {self.access_token}",
+#                             "x-api-key": self.api_key,
+#                             "x-client-code": self.client_id,
+#                             "x-feed-token": self.feed_token
+#                         }
+#
+#             self.ws = websocket.WebSocketApp(
+#                 url,
+#                 header=[f"{k}: {v}" for k, v in headers.items()],
+#                 on_open=self.on_open,
+#                 on_message=self.on_message,
+#                 on_close=self.on_close,
+#             )
+#             threading.Thread(
+#                 target=self.ws.run_forever,
+#                 kwargs={
+#                     "ping_interval": 25,
+#                     "ping_timeout": 10,
+#                 },
+#                 daemon=True
+#             ).start()
+#         except Exception as e:
+#             pass
+#
+#     def reconnect(self):
+#         if self.reconnecting:
+#             return
+#
+#         self.reconnecting = True
+#         print("🔁 Reconnecting Angel WS (token refresh)...")
+#
+#         try:
+#             tokens = self.auto_login.login()  # 🔥 regenerate token
+#
+#             self.access_token = tokens["access_token"]
+#             self.feed_token = tokens["feed_token"]
+#
+#             print("✅ New tokens generated")
+#
+#             if self.ws:
+#                 try:
+#                     self.ws.close()
+#                 except:
+#                     pass
+#
+#             self.connect()
+#
+#         except Exception as e:
+#             print("❌ Reconnect failed:", e)
+#
+#         finally:
+#             self.reconnecting = False
+#
+#     def on_open(self, ws):
+#         print("✅ Angel WebSocket Connected")
+#         self.subscribe_all()
+#
+#     def on_close(self, ws, code, reason):
+#         print("❌ Angel WebSocket Closed:", reason)
+#         self.reconnect()
+#
+#     def on_message(self, ws, binary_message: bytes):
+#         try:
+#             token = binary_message[2:27].split(b"\x00")[0].decode()
+#
+#             unpacked = struct.unpack("<6q2d4q", binary_message[27:123])
+#
+#             exchange_type_code = binary_message[1]
+#             exch = EXCHANGE_TYPE_MAP.get(exchange_type_code, "unknown")
+#             if exch == "cde_fo":
+#                 divisor = 10000000.0  # currency
+#             else:
+#                 divisor = 100.0  # equity, mcx, indices, etc
+#
+#             ANGEL_SYMBOLS = [
+#                         {"exchangeType": 1, "token": "99926009", "name": "Nifty Bank"},
+#                         {"exchangeType": 1, "token": "99926000", "name": "Nifty 50"},
+#                         # {"exchangeType": 5, "token": "99920000", "name": "MCXCRUDEX"},
+#                         # {"exchangeType": 5, "token": "99920002", "name": "MCXGOLDEX"},
+#                         {"exchangeType": 1, "token": "99926001", "name": "Nifty GrowSect 15"},
+#                         {"exchangeType": 1, "token": "99926008", "name": "Nifty IT"},
+#                         {"exchangeType": 1, "token": "99926011", "name": "NIFTY MIDCAP 100"},
+#                         {"exchangeType": 1, "token": "99926012", "name": "Nifty 100"},
+#                         {"exchangeType": 1, "token": "99926013", "name": "Nifty Next 50"},
+#                         {"exchangeType": 1, "token": "99926019", "name": "Nifty Infra"},
+#                         {"exchangeType": 1, "token": "99926021", "name": "Nifty FMCG"},
+#                         {"exchangeType": 1, "token": "99926029", "name": "Nifty Auto"},
+#                         {"exchangeType": 1, "token": "99926032", "name": "NIFTY SMLCAP 100"},
+#                         {"exchangeType": 1, "token": "99926034", "name": "Nifty Div Opps 50"},
+#                         {"exchangeType": 1, "token": "99926037", "name": "Nifty Fin Service"},
+#                         {"exchangeType": 1, "token": "99926059", "name": "NIFTY ALPHA 50"},
+#                         {"exchangeType": 3, "token": "99919000", "name": "SENSEX"},
+#                         # {"exchangeType": 13, "token": "1", "name": "USDINR"},
+#                         # {"exchangeType": 13, "token": "25", "name": "EURINR"},
+#                         # {"exchangeType": 13, "token": "26", "name": "GBPINR"},
+#                         # {"exchangeType": 13, "token": "27", "name": "JPYINR"},
+#             ]
+#
+#             TOKEN_NAME_MAP = {
+#                 sym["token"]: sym["name"]
+#                 for sym in ANGEL_SYMBOLS
+#             }
+#             TOKEN_NAME_MAP.get(token, "UNKNOWN")
+#
+#             data = {
+#                 "token": token,
+#                 "ltp": unpacked[2] / divisor,
+#                 "open": unpacked[8] / divisor,
+#                 "high": unpacked[9] / divisor,
+#                 "low": unpacked[10] / divisor,
+#                 "close": unpacked[11] / divisor,
+#                 "exchange": exch,
+#                 "name":  TOKEN_NAME_MAP.get(token, "UNKNOWN")
+#             }
+#             redis_client.set(
+#                 f"last_tick:{token}",
+#                 json.dumps(data)
+#             )
+#             if loop_store.event_loop:
+#                 asyncio.run_coroutine_threadsafe(
+#                     manager.broadcast(data),
+#                     loop_store.event_loop
+#                 )
+#
+#         except Exception as e:
+#             if isinstance(binary_message, str):
+#                 if "token" in binary_message.lower() or "auth" in binary_message.lower():
+#                     print("⚠️ Token expired detected from server message")
+#                     self.reconnect()
+#                     return
+
+
+import websocket
+import json
+import threading
+import time
+import struct
+import asyncio
+
 class AngelWSClient:
     def __init__(self, client_id, access_token, api_key, feed_token, auto_login):
         self.client_id = client_id
         self.access_token = access_token
         self.feed_token = feed_token
         self.api_key = api_key
+        self.auto_login = auto_login
+
         self.ws = None
-        self.auto_login = auto_login  # AngelAutoLogin instance
+        self.connected = False
+        self.should_run = False
         self.reconnecting = False
+        self.last_tick_time = time.time()
+
+    def connect(self):
+        if not self.should_run:
+            print("🚫 Connect skipped — no active users")
+            return
+
+        try:
+            url = (
+                "wss://smartapisocket.angelone.in/smart-stream"
+                f"?client_id={self.client_id}"
+                f"&token={self.feed_token}"
+                f"&api_key={self.api_key}"
+            )
+
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "x-api-key": self.api_key,
+                "x-client-code": self.client_id,
+                "x-feed-token": self.feed_token
+            }
+
+            self.ws = websocket.WebSocketApp(
+                url,
+                header=[f"{k}: {v}" for k, v in headers.items()],
+                on_open=self.on_open,
+                on_message=self.on_message,
+                on_close=self.on_close,
+            )
+
+            threading.Thread(
+                target=self.ws.run_forever,
+                kwargs={
+                    "ping_interval": 25,
+                    "ping_timeout": 10,
+                },
+                daemon=True
+            ).start()
+
+        except Exception as e:
+            print("Connect error:", e)
 
     def subscribe_all(self):
         from app.core.market_bridge import build_token_list
 
-        if not self.ws or not self.ws.sock or not self.ws.sock.connected:
+        if not self.connected:
             return
 
         req = {
@@ -127,82 +348,104 @@ class AngelWSClient:
             },
         }
 
-        self.ws.send(json.dumps(req))
-        print("✅ Angel batch subscribed")
-
-    def connect(self):
         try:
-            url = (
-                "wss://smartapisocket.angelone.in/smart-stream"
-                f"?client_id={self.client_id}"
-                f"&token={self.feed_token}"
-                f"&api_key={self.api_key}"
-            )
-            headers = {
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {self.access_token}",
-                            "x-api-key": self.api_key,
-                            "x-client-code": self.client_id,
-                            "x-feed-token": self.feed_token
-                        }
-
-            self.ws = websocket.WebSocketApp(
-                url,
-                header=[f"{k}: {v}" for k, v in headers.items()],
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_close=self.on_close,
-            )
-            threading.Thread(
-                target=self.ws.run_forever,
-                kwargs={
-                    "ping_interval": 25,
-                    "ping_timeout": 10,
-                },
-                daemon=True
-            ).start()
+            self.ws.send(json.dumps(req))
+            print("✅ Angel subscribed")
         except Exception as e:
-            pass
+            print("Subscribe failed:", e)
 
-    def reconnect(self):
+    def unsubscribe_all(self):
+        from app.core.market_bridge import build_token_list
+
+        if not self.ws:
+            print("⚠️ Skip unsubscribe — ws not created")
+            return
+
+        if not self.connected:
+            print("⚠️ Skip unsubscribe — already closed")
+            return
+
+        try:
+            if not self.ws.sock or not self.ws.sock.connected:
+                print("⚠️ Skip unsubscribe — socket already closed")
+                self.connected = False
+                return
+        except Exception:
+            print("⚠️ Skip unsubscribe — socket state unknown")
+            self.connected = False
+            return
+
+        try:
+            req = {
+                "correlationID": "batch_unsub",
+                "action": 0,
+                "params": {
+                    "mode": 3,
+                    "tokenList": build_token_list(),
+                },
+            }
+
+            self.ws.send(json.dumps(req))
+            print("🛑 Angel unsubscribed")
+
+        except Exception as e:
+            print("Unsubscribe error:", e)
+
+        finally:
+            try:
+                self.ws.close()
+            except:
+                pass
+
+            self.connected = False
+
+    def start_reconnect_loop(self):
         if self.reconnecting:
             return
 
-        self.reconnecting = True
-        print("🔁 Reconnecting Angel WS (token refresh)...")
+        def loop():
+            self.reconnecting = True
 
-        try:
-            tokens = self.auto_login.login()  # 🔥 regenerate token
-
-            self.access_token = tokens["access_token"]
-            self.feed_token = tokens["feed_token"]
-
-            print("✅ New tokens generated")
-
-            if self.ws:
+            while self.should_run and not self.connected:
                 try:
-                    self.ws.close()
-                except:
-                    pass
+                    print("🔁 Reconnecting Angel...")
+                    tokens = self.auto_login.login()
 
-            self.connect()
+                    self.access_token = tokens["access_token"]
+                    self.feed_token = tokens["feed_token"]
 
-        except Exception as e:
-            print("❌ Reconnect failed:", e)
+                    self.connect()
+                    time.sleep(5)
 
-        finally:
+                except Exception as e:
+                    print("Reconnect error:", e)
+                    time.sleep(3)
+
             self.reconnecting = False
 
+        threading.Thread(target=loop, daemon=True).start()
+
     def on_open(self, ws):
-        print("✅ Angel WebSocket Connected")
-        self.subscribe_all()
+        print("✅ Angel Connected")
+        self.connected = True
+        self.last_tick_time = time.time()
+
+        if self.should_run:
+            self.subscribe_all()
 
     def on_close(self, ws, code, reason):
-        print("❌ Angel WebSocket Closed:", reason)
-        self.reconnect()
+        print("❌ Angel Closed:", reason)
+        self.connected = False
 
-    def on_message(self, ws, binary_message: bytes):
+        if self.should_run:
+            self.start_reconnect_loop()
+        else:
+            print("🛑 No users — reconnect skipped")
+
+    def on_message(self, ws, binary_message):
         try:
+            self.last_tick_time = time.time()
+
             token = binary_message[2:27].split(b"\x00")[0].decode()
 
             unpacked = struct.unpack("<6q2d4q", binary_message[27:123])
@@ -210,15 +453,13 @@ class AngelWSClient:
             exchange_type_code = binary_message[1]
             exch = EXCHANGE_TYPE_MAP.get(exchange_type_code, "unknown")
             if exch == "cde_fo":
-                divisor = 10000000.0  # currency
+                divisor = 10000000.0
             else:
-                divisor = 100.0  # equity, mcx, indices, etc
+                divisor = 100.0
 
             ANGEL_SYMBOLS = [
                         {"exchangeType": 1, "token": "99926009", "name": "Nifty Bank"},
                         {"exchangeType": 1, "token": "99926000", "name": "Nifty 50"},
-                        # {"exchangeType": 5, "token": "99920000", "name": "MCXCRUDEX"},
-                        # {"exchangeType": 5, "token": "99920002", "name": "MCXGOLDEX"},
                         {"exchangeType": 1, "token": "99926001", "name": "Nifty GrowSect 15"},
                         {"exchangeType": 1, "token": "99926008", "name": "Nifty IT"},
                         {"exchangeType": 1, "token": "99926011", "name": "NIFTY MIDCAP 100"},
@@ -232,10 +473,6 @@ class AngelWSClient:
                         {"exchangeType": 1, "token": "99926037", "name": "Nifty Fin Service"},
                         {"exchangeType": 1, "token": "99926059", "name": "NIFTY ALPHA 50"},
                         {"exchangeType": 3, "token": "99919000", "name": "SENSEX"},
-                        # {"exchangeType": 13, "token": "1", "name": "USDINR"},
-                        # {"exchangeType": 13, "token": "25", "name": "EURINR"},
-                        # {"exchangeType": 13, "token": "26", "name": "GBPINR"},
-                        # {"exchangeType": 13, "token": "27", "name": "JPYINR"},
             ]
 
             TOKEN_NAME_MAP = {
@@ -265,8 +502,4 @@ class AngelWSClient:
                 )
 
         except Exception as e:
-            if isinstance(binary_message, str):
-                if "token" in binary_message.lower() or "auth" in binary_message.lower():
-                    print("⚠️ Token expired detected from server message")
-                    self.reconnect()
-                    return
+            print("Message error:", e)

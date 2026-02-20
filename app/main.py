@@ -1,7 +1,7 @@
 import asyncio
 
 from app.core.angel_auto_login import AngelAutoLogin
-from app.core.angel_container import angel_container
+# from app.core.angel_container import angel_container
 from app.core.angel_ws import AngelWSClient
 from app.core.event_loop import loop_store
 
@@ -31,19 +31,19 @@ async def lifespan(app: FastAPI):  # type: ignore[override]
     logger.info("Shutting down StockAnalysis Screener API")
 
 
-auth = AngelAutoLogin()
-tokens = auth.login()
-
-angel = AngelWSClient(
-    client_id=settings.ANGLE_ONE_CLIENT_ID,
-    access_token=tokens["access_token"],
-    feed_token=tokens["feed_token"],
-    api_key=settings.ANGLE_ONE_API_KEY,
-    auto_login=auth
-)
-
-angel.connect()
-angel_container.angel = angel
+# auth = AngelAutoLogin()
+# tokens = auth.login()
+#
+# angel = AngelWSClient(
+#     client_id=settings.ANGLE_ONE_CLIENT_ID,
+#     access_token=tokens["access_token"],
+#     feed_token=tokens["feed_token"],
+#     api_key=settings.ANGLE_ONE_API_KEY,
+#     auto_login=auth
+# )
+#
+# angel.connect()
+# angel_container.angel = None
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
