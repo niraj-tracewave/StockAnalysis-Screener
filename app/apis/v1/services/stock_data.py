@@ -10,7 +10,7 @@ from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
     QuarterlyResultDateset
-from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
+from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
     YEAR_OR_MONTY_TO_DAYS_MAP
 from app.core.custom_error_response import CustomValidationError
@@ -264,7 +264,6 @@ class CompanyStockFetchService:
             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(symbol, "equity")
             quarterly_result = []
             if integrated_filing_financials_list:
-                print("get list of filing financials")
                 response_list = []
                 for integrated_filing_obj in integrated_filing_financials_list.get("data"):
                     qe_date = integrated_filing_obj.get("qe_Date")
@@ -724,7 +723,11 @@ class CompanyStockFetchService:
                         "values": filtered_values,
                         "meta": {**chart.meta, "days": "1M"}
                     })
-
+            quarterly_result_r = {}
+            for item in company.quarterly_result:
+                quarterly_result_r = QuarterlyResultSchema.model_validate(item).model_dump()
+                if quarterly_result_r:
+                    quarterly_result_r = quarterly_result_r.get("values")
             response = {
                 "id": company.id,
                 "name": company.name,
@@ -755,7 +758,7 @@ class CompanyStockFetchService:
                 } if details else None,
 
                 "chart": one_month_charts,
-                "quarterly_result": quarterly_result,
+                "quarterly_result": quarterly_result_r or quarterly_result,
                 "profit_loss": profit_loss,
                 "balance_sheet": balance_sheet,
                 "cash_flow": cash_flow,
