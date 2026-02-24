@@ -699,3 +699,81 @@ YEAR_OR_MONTY_TO_DAYS_MAP = {
   "25Y": 9125,
   "30Y": 10950,
 }
+
+PARENT_CHILD_MAP = {
+    "income": [
+        "revenue from operations",
+        "other income",
+        "total income"
+    ],
+
+    "expenses": [
+        "cost of materials consumed",
+        "purchases of stock-in-trade",
+        "changes in inventories of finished goods, work-in-progress and stock-in-trade",
+        "employee benefit expense",
+        "finance costs",
+        "depreciation, depletion and amortisation expense",
+        "other expenses",
+        "total other expenses",
+        "total expenses"
+    ],
+
+    "other expenses": [
+        "cost of equipment and software licences",
+        "other expenses"
+    ],
+
+    "Total profit before exceptional items and tax": [],
+    "Exceptional items": [],
+    "Total profit before tax": [],
+    "Tax expense": [],
+    "Current tax": [],
+    "Deferred tax": [],
+    "Total tax expenses": [],
+    "Net movement in regulatory deferral account balances related to profit or loss and the related deferred tax movement": [],
+    "Net Profit Loss for the period from continuing operations": [],
+    "Profit (loss) from discontinued operations before tax": [],
+    "Tax expense of discontinued operations": [],
+    "Net profit (loss) from discontinued operation after tax": [],
+    "Share of profit (loss) of associates and joint ventures accounted for using equity method": [],
+    "Total profit (loss) for period": [],
+    "Other comprehensive income net of taxes": [],
+    "Total Comprehensive Income for the period": [],
+    "Total profit or loss, attributable to": [
+        "Profit or loss, attributable to owners of parent",
+        "Total profit or loss, attributable to non-controlling interests",
+    ],
+    "Total Comprehensive income for the period attributable to": [
+        "Comprehensive income for the period attributable to owners of parent",
+        "Total comprehensive income for the period attributable to owners of parent non-controlling interests",
+    ],
+    "Details of equity share capital": [
+        "Paid-up equity share capital",
+        "Face value of equity share capital"
+    ],
+    "Details of debt securities": [],
+    "Reserves excluding revaluation reserve": [],
+    "Earnings per share": [
+        "Earnings per equity share for continuing operations",
+        "Earnings per equity share",
+        "Earnings per equity share for discontinued operations",
+    ],
+    "Earnings per equity share for continuing operations": [
+        "Basic earnings (loss) per share from continuing operations",
+        "Diluted earnings (loss) per share from continuing operations",
+    ],
+    "Earnings per equity share for discontinued operations": [
+        "Basic earnings (loss) per share from discontinued operations",
+        "Diluted earnings (loss) per share from discontinued operations"
+    ],
+    "Earnings per equity share": [
+        "Basic earnings (loss) per share from continuing and discontinued operations",
+        "Diluted earnings (loss) per share from continuing and discontinued operations"
+    ],
+    "Debt equity ratio": [],
+    "Debt service coverage ratio": [],
+    "Interest service coverage ratio": [],
+    "Disclosure of notes on financial results": [],
+
+}

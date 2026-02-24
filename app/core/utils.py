@@ -1,13 +1,18 @@
 import calendar
 import os
+import re
+import unicodedata
+
 import aiohttp
 import pandas as pd
 import pyotp
 import uuid
 import base64
 import requests
+from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
+from app.core.constants import PARENT_CHILD_MAP
 
 settings = get_settings()
 
@@ -291,3 +296,306 @@ async def fetch_symbols_from_covered_symbol_json():
         except Exception as e:
             return {}
     return {}
+
+async def normalize(text):
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().lower()
+
+async def inject_values_into_hierarchy(structure, values_json):
+
+    value_lookup = {
+        await normalize(item["heading"]): item["value"]
+        for item in values_json
+        if item.get("value") is not None
+    }
+
+    async def traverse(nodes):
+        for node in nodes:
+            key = await normalize(node["heading"])
+
+            if key in value_lookup:
+                node["value"] = value_lookup[key]
+
+            await traverse(node["child"])
+
+    await traverse(structure)
+    return structure
+
+async def build_hierarchy(flat_data, parent_child_map):
+    import json
+
+    if isinstance(flat_data, str):
+        flat_data = json.loads(flat_data)
+
+    # -------------------------
+    # STEP 1 — create parent containers
+    # -------------------------
+    parent_nodes = {
+        await normalize(parent): {
+            "heading": parent.title(),
+            "value": None,
+            "child": []
+        }
+        for parent in parent_child_map.keys()
+    }
+
+    # -------------------------
+    # STEP 2 — build child → parent lookup
+    # -------------------------
+    child_to_parent = {
+        await normalize(child): await normalize(parent)
+        for parent, childs in parent_child_map.items()
+        for child in childs
+    }
+
+    # -------------------------
+    # STEP 3 — insert nested parents first
+    # (IMPORTANT)
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        parent_key = await normalize(parent)
+
+        for child in children:
+            child_key = await normalize(child)
+
+            # IMPORTANT: prevent self-reference loop
+            if child_key == parent_key:
+                continue
+
+            if child_key in parent_nodes:
+                parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+
+    # -------------------------
+    # STEP 4 — now attach flat rows in order
+    # -------------------------
+    for row in flat_data:
+        if not isinstance(row, dict):
+            continue
+        if row.get("heading") is None:
+            continue
+        heading_raw = row.get("heading", "").strip()
+        heading = await normalize(heading_raw)
+        value = row.get("value")
+
+        if heading in parent_nodes:
+            if value is None:
+                continue
+
+        node = {
+            "heading": heading,
+            "value": value,
+            "child": []
+        }
+
+        if heading in child_to_parent:
+            parent_key = child_to_parent[heading]
+            parent_nodes[parent_key]["child"].append(node)
+
+    # -------------------------
+    # STEP 5 — find real roots
+    # -------------------------
+    all_children = set(child_to_parent.keys())
+
+    roots = []
+    for parent in parent_child_map:
+        if await normalize(parent) not in all_children:
+            roots.append(parent_nodes[await normalize(parent)])
+
+    return roots
+
+
+async def safe_build(data):
+    import json
+    if isinstance(data, str):
+        data = json.loads(data)
+    return await build_hierarchy(data, PARENT_CHILD_MAP)
+
+async def parse_numeric(text):
+    if not text:
+        return None
+
+    text = text.strip()
+
+    is_negative = text.startswith("(") and text.endswith(")")
+    text = text.replace("(", "").replace(")", "").replace(",", "")
+
+    try:
+        value = float(text)
+        return -value if is_negative else value
+    except ValueError:
+        return None
+
+async def fetch_th_tr_from_table(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th")
+        tds = row.find_all("td")
+        f_json = {
+            "heading": None,
+            "value": None,
+        }
+        if ths:
+            section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+            f_json['heading'] = section_name
+            if tds:
+                if len(tds) == 3:
+                    section_name = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                    f_json['heading'] = section_name
+                    text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                else:
+                    text = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                f_json['value'] = value
+            final_data.append(f_json)
+    return final_data
+
+
+async def fetch_integrated_filing_financials_data_from_nse(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/",
+            "Connection": "keep-alive"
+        }
+
+        # first hit homepage to get cookies
+        session.get("https://www.nseindia.com", headers=headers)
+
+        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
+        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_BANKING_135572_17012026162609_iXBRL_WEB.html"
+        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
+
+        path = url.split("nsearchives.nseindia.com")[-1]
+
+        headers = {
+            "authority": "nsearchives.nseindia.com",
+            "method": "GET",
+            "path": path,
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "if-none-match": "W/\"46855-1768223605988\"",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+            table = None
+            if tables:
+                for table1 in tables[:1]:
+                    table = table1
+            else:
+                tables = soup.find_all("table")
+                for table1 in tables[1:2]:
+                    table = table1
+            rows = [
+                tr for tr in table.find_all("tr")
+                if tr.get_text(strip=True)
+            ]
+
+            final_data = await fetch_th_tr_from_table(rows)
+
+            structured = await safe_build(final_data)
+            structured_with_values = await inject_values_into_hierarchy(
+                structured,
+                final_data
+            )
+            return structured_with_values
+
+        return structured_with_values
+    except Exception as e:
+        return []
+
+
+async def build_node(item, node_map, quarter_index):
+    heading = item.get("heading")
+    value = item.get("value")
+    children = item.get("child", [])
+
+    # convert lakhs → crores
+    if isinstance(value, (int, float)):
+        value = value / 100
+
+
+    if heading not in node_map:
+        node_map[heading] = {
+            "key": heading.lower().replace(" ", "_"),
+            "label": heading,
+            "type": "group" if children else "single",
+            "unit": "Rs Cr",
+            "values": [],
+            "children": {}
+        }
+
+    node = node_map[heading]
+
+    # IMPORTANT: create placeholders for previous quarters
+    if len(node["values"]) <= quarter_index:
+        node["values"].extend([None] * (quarter_index + 1 - len(node["values"])))
+
+    # set ONLY this quarter value
+    node["values"][quarter_index] = value
+
+    # process children recursively
+    for child in children:
+        await build_node(child, node["children"], quarter_index)
+
+async def convert_to_quarterly_format(response_list):
+
+    # sort quarters first
+    response_list = sorted(
+        response_list,
+        key=lambda q: q[-1]["date"]
+    )
+
+    headers = []
+    root_map = {}
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for item in quarter[:-1]:
+            await build_node(item, root_map, quarter_index)
+
+    # convert children dict → list
+    def finalize(node):
+        if node["children"]:
+            node["children"] = [finalize(child) for child in node["children"].values()]
+        else:
+            node.pop("children", None)
+        return node
+
+    rows = [finalize(node) for node in root_map.values()]
+
+    return {
+        "headers": headers,
+        "rows": rows
+    }

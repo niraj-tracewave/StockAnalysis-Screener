@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
-from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod
+from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
+    QuarterlyResultDateset
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
     YEAR_OR_MONTY_TO_DAYS_MAP
@@ -16,11 +17,12 @@ from app.core.custom_error_response import CustomValidationError
 from app.core.custom_response import CustomJSONResponse
 from app.core.nse_search import fetch_bse_exact_symbol_data, fetch_nse_exact_symbol_data
 from app.core.utils import parse_qtr, parse_period_to_date, fetch_top_50_company_from_nse, \
-    fetch_json_from_angle_one
+    fetch_json_from_angle_one, fetch_integrated_filing_financials_data_from_nse, convert_to_quarterly_format
 from app.db.postgres.base import BaseDBOperations
 from app.tasks.tasks import fetch_and_store_company_data_from_top_50
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
 from scripts.bse_shareholder_pattern import main_fetch_stock_share_holder_pattern
+from scripts.fetch_integrated_filling_financials import main_fetch_integrated_filing_financials
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse import main
 from scripts.bse import main as main_bse
@@ -235,10 +237,55 @@ class CompanyStockFetchService:
     async def fetch_company_quarterly_result(search_request: SearchCompanyStockSchema, db: Session = Depends(get_db)):
         symbol = search_request.symbol
         scrip = search_request.scrip
+
+        stmt = (
+            select(CompanyStock)
+            .options(selectinload(CompanyStock.details))
+            .options(selectinload(CompanyStock.charts))
+            .where(
+                or_(
+                    CompanyStock.nse_symbol == symbol,
+                    CompanyStock.bse_code == symbol
+                )
+            )
+        )
+
+        result = await db.execute(stmt)
+        company = result.scalars().first()
+
+        if company is None:
+            raise CustomValidationError(
+                validations={"error": [f"Company not found for symbol : {symbol}"]}, status_code=400
+            )
+
         if scrip and symbol:
             pass
         elif symbol:
-            pass
+            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(symbol, "equity")
+            quarterly_result = []
+            if integrated_filing_financials_list:
+                print("get list of filing financials")
+                response_list = []
+                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                    qe_date = integrated_filing_obj.get("qe_Date")
+                    consolidated = integrated_filing_obj.get("consolidated")
+                    ixbrl = integrated_filing_obj.get("ixbrl")
+                    formatted = None
+                    if qe_date:
+                        formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
+                    if consolidated == "Consolidated":
+                        output = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                        output.append({
+                            "date": formatted or qe_date,
+                            "consolidated": consolidated
+                        })
+                        response_list.append(output)
+                if response_list:
+                    quarterly_result = await convert_to_quarterly_format(response_list)
+            if quarterly_result:
+                company_quarterly_result_ops = BaseDBOperations(db, QuarterlyResultDateset)
+                await company_quarterly_result_ops.create(
+                    {'company_id': company.id, 'values': quarterly_result })
         elif scrip:
             pass
 
@@ -454,6 +501,7 @@ class CompanyStockFetchService:
                 select(CompanyStock)
                 .options(selectinload(CompanyStock.details))
                 .options(selectinload(CompanyStock.charts))
+                .options(selectinload(CompanyStock.quarterly_result))
                 .where(
                     or_(
                         CompanyStock.nse_symbol == symbol,
