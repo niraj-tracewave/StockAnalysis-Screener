@@ -93,8 +93,12 @@
 import json
 import struct
 import threading
+from datetime import datetime, time
+
 import websocket
 import asyncio
+
+from pandas.conftest import pytz
 
 from app.core.constants import EXCHANGE_TYPE_MAP
 from app.core.event_loop import loop_store
@@ -278,6 +282,8 @@ import threading
 import time
 import struct
 import asyncio
+
+ist = pytz.timezone("Asia/Kolkata")
 
 class AngelWSClient:
     def __init__(self, client_id, access_token, api_key, feed_token, auto_login):
@@ -480,7 +486,9 @@ class AngelWSClient:
                 for sym in ANGEL_SYMBOLS
             }
             TOKEN_NAME_MAP.get(token, "UNKNOWN")
+            current_time = datetime.now(ist).time()
 
+            market_status = time(8, 50) <= current_time <= time(17, 0)
             data = {
                 "token": token,
                 "ltp": unpacked[2] / divisor,
@@ -489,7 +497,8 @@ class AngelWSClient:
                 "low": unpacked[10] / divisor,
                 "close": unpacked[11] / divisor,
                 "exchange": exch,
-                "name":  TOKEN_NAME_MAP.get(token, "UNKNOWN")
+                "name":  TOKEN_NAME_MAP.get(token, "UNKNOWN"),
+                "market_status": market_status
             }
             redis_client.set(
                 f"last_tick:{token}",
