@@ -520,3 +520,180 @@ async def fetch_30y_stock_chart_data_async():
             continue
 
     db.close()
+
+async def fetch_and_update_30y_stock_chart_data_async():
+    db = SessionLocalSync()
+
+    stmt = (
+        select(CompanyStock)
+        .options(selectinload(CompanyStock.details))
+        .execution_options(yield_per=100)
+    )
+
+    result = db.execute(stmt)
+    companies = result.scalars().all()
+
+    for company in companies:
+        try:
+            print(f"\nProcessing company: {company.id} | {company.name}")
+
+            chart_stmt = select(ChartDataset).where(
+                ChartDataset.company_id == company.id,
+                ChartDataset.meta["days"].astext.in_(["1W", "1M", "6M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y"])
+            )
+            result = db.execute(chart_stmt)
+            charts = result.scalars().all()
+
+            stmt = select(ChartDataset).where(
+                ChartDataset.company_id == company.id,
+                ChartDataset.meta["days"].astext == "30Y"
+            )
+
+            exists_30y = db.scalar(stmt)
+
+            if charts:
+                db.execute(
+                    delete(ChartDataset).where(
+                        ChartDataset.company_id == company.id
+                    )
+                )
+                db.commit()
+
+            if exists_30y:
+                series = symbol_type = identifier = None
+
+                try:
+                    if company.nse_code:
+                        nse_data = await main(company.nse_symbol)
+                        symbol_data = nse_data.get('symbolData', {})
+                        equity_response = symbol_data.get('equityResponse', [{}])[0]
+                        nse_metadata = equity_response.get('metaData', {})
+                        sec_info = equity_response.get('secInfo', {})
+
+                        series = nse_metadata.get("series")
+                        symbol_type = sec_info.get("classShare")
+                        identifier = nse_metadata.get("identifier")
+
+                except Exception as e:
+                    print(f"NSE metadata failed for {company.nse_symbol}: {e}")
+                    raise
+
+                days_list = ["30Y"]
+
+                if company.nse_code and company.bse_code:
+                    try:
+                        volume_data = await main_fetch_volume_from_nse(
+                            company.nse_code,
+                            f"{company.nse_symbol}-{series}",
+                            symbol_type
+                        )
+
+                        for days in days_list:
+                            company_name_with_dash = company.name.replace(" ", "-")
+
+                            nse_data = await new_main_fetch_stock_price_for_graph(
+                                days,
+                                identifier,
+                                company.nse_symbol,
+                                company_name_with_dash
+                            )
+
+                            chart = nse_data.get('grapthData')
+
+                            if chart:
+                                volume_map = {
+                                    item["time"]: item["volume"]
+                                    for item in volume_data.get("data", [])
+                                }
+
+                                updated_data = []
+                                for row in chart:
+                                    time = row[0]
+                                    volume = volume_map.get(time)
+                                    updated_data.append(row + [volume])
+
+                                exists_30y.values = updated_data
+
+                    except Exception as e:
+                        print(f"NSE chart fetch failed for {company.nse_symbol}: {e}")
+                        raise
+
+                elif company.nse_code:
+                    try:
+                        volume_data = await main_fetch_volume_from_nse(
+                            company.nse_code,
+                            f"{company.nse_symbol}-{series}",
+                            symbol_type
+                        )
+
+                        for days in days_list:
+                            company_name_with_dash = company.name.replace(" ", "-")
+
+                            nse_data = await new_main_fetch_stock_price_for_graph(
+                                days,
+                                identifier,
+                                company.nse_symbol,
+                                company_name_with_dash
+                            )
+
+                            chart = nse_data.get('grapthData')
+
+                            if chart:
+                                volume_map = {
+                                    item["time"]: item["volume"]
+                                    for item in volume_data.get("data", [])
+                                }
+
+                                updated_data = []
+                                for row in chart:
+                                    time = row[0]
+                                    volume = volume_map.get(time)
+                                    updated_data.append(row + [volume])
+
+                                exists_30y.values = updated_data
+
+                    except Exception as e:
+                        print(f"NSE chart fetch failed for {company.nse_symbol}: {e}")
+                        raise
+
+                elif company.bse_code:
+                    try:
+                        for days in days_list:
+                            bse_data = await new_main_fetch_stock_price_for_bse_graph(
+                                company.bse_code
+                            )
+
+                            script_header = bse_data.get('Data')
+                            if script_header:
+                                data_list = json.loads(script_header)
+                                result_list = []
+
+                                for item in data_list:
+                                    ts_ms = int(
+                                        datetime.strptime(
+                                            item["dttm"],
+                                            "%a %b %d %Y %H:%M:%S"
+                                        ).timestamp() * 1000
+                                    )
+                                    price = float(item["vale1"])
+                                    volume = int(item["vole"])
+
+                                    result_list.append(
+                                        [ts_ms, price, "", None, None, volume]
+                                    )
+
+                                exists_30y.values = result_list
+
+                    except Exception as e:
+                        print(f"BSE chart fetch failed for {company.bse_code}: {e}")
+                        raise
+
+                db.commit()
+
+        except Exception as e:
+            db.rollback()
+            print(f"\nFAILED company: {company.id} | {company.name}")
+            print("Error:", str(e))
+            continue
+
+    db.close()

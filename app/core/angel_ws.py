@@ -93,7 +93,7 @@
 import json
 import struct
 import threading
-from datetime import datetime, time
+from datetime import datetime, time as dtime
 
 import websocket
 import asyncio
@@ -282,8 +282,9 @@ import threading
 import time
 import struct
 import asyncio
+from zoneinfo import ZoneInfo
 
-ist = pytz.timezone("Asia/Kolkata")
+ist = ZoneInfo("Asia/Kolkata")
 
 class AngelWSClient:
     def __init__(self, client_id, access_token, api_key, feed_token, auto_login):
@@ -488,7 +489,7 @@ class AngelWSClient:
             TOKEN_NAME_MAP.get(token, "UNKNOWN")
             current_time = datetime.now(ist).time()
 
-            market_status = time(8, 50) <= current_time <= time(17, 0)
+            market_status = dtime(8, 50) <= current_time <= dtime(17, 0)
             data = {
                 "token": token,
                 "ltp": unpacked[2] / divisor,

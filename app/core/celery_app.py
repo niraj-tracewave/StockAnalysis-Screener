@@ -23,8 +23,12 @@ celery_app.conf.beat_schedule = {
         "task": "fetch_and_store_company_data_from_top_50",
         "schedule": crontab(minute="*/30"),
     },
-    "fetch_30y_stock_chart_dat_from_nse_bse": {
-        "task": "fetch_30y_stock_chart_data",
-        "schedule": crontab(hour=18, minute=8),
-    },
+    # "fetch_30y_stock_chart_dat_from_nse_bse": {
+    #     "task": "fetch_30y_stock_chart_data",
+    #     "schedule": crontab(hour=18, minute=8),
+    # },
+    "fetch_30y_stock_chart_dat_from_nse_bse_new": {
+            "task": "fetch_30y_stock_chart_data",
+            "schedule": crontab(hour=18, minute=30),
+        },
 }

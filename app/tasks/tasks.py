@@ -1,6 +1,7 @@
 import asyncio
 
-from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async, fetch_30y_stock_chart_data_async
+from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async, \
+    fetch_30y_stock_chart_data_async, fetch_and_update_30y_stock_chart_data_async
 from app.db.postgres.sync_session import SessionLocalSync
 from app.apis.models.company import Company
 from sqlalchemy.dialects.postgresql import insert
@@ -75,3 +76,13 @@ def fetch_30y_stock_chart_data():
     Background task to store NSE company data
     """
     asyncio.run(fetch_30y_stock_chart_data_async())
+
+
+@celery_app.task(
+    name="fetch_and_update_30y_stock_chart_data",
+)
+def fetch_and_update_30y_stock_chart_data():
+    """
+    Background task to store NSE company data
+    """
+    asyncio.run(fetch_and_update_30y_stock_chart_data_async())
