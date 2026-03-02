@@ -24,6 +24,7 @@ async def fetch_and_store_company_data_from_top_50_async():
     Background task to store NSE company data
     """
     db = SessionLocalSync()
+    error_symbols = []
     try:
         file_path = 'OpenAPIScripMaster.json'
         all_filtered_data = filter_exchange_data_from_file(file_path)
@@ -292,6 +293,7 @@ async def fetch_and_store_company_data_from_top_50_async():
 
                 except Exception as symbol_error:
                     # db.rollback()
+                    error_symbols.append(symbol)
                     print(f"Error for symbol {symbol}: {symbol_error}")
                     continue
 
@@ -322,6 +324,27 @@ async def fetch_and_store_company_data_from_top_50_async():
         raise
     finally:
         db.close()
+        file_path = "covered_symbols.json"
+
+        data = {
+            "processed": [],
+            "skipped": [],
+            "error": []
+        }
+
+        if os.path.exists(file_path):
+            with open(file_path, "r") as f:
+                try:
+                    data = json.load(f)
+                except:
+                    pass
+
+        data["processed"] = list(set(data.get("processed", [])))
+        data["skipped"] = list(set(data.get("skipped", [])))
+        data["error"] = list(set(data.get("error", [])+ error_symbols))
+
+        with open(file_path, "w") as f:
+            json.dump(data, f, indent=2)
 
 async def fetch_30y_stock_chart_data_async():
     db = SessionLocalSync()
