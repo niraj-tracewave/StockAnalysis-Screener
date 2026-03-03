@@ -17,10 +17,27 @@ def setup_logging() -> None:
                 "formatter": "standard",
                 "level": "INFO",
             },
+            "function_file": {
+                "class": "logging.handlers.TimedRotatingFileHandler",
+                "formatter": "standard",
+                "filename": "logs/missing_symbols.log",
+                "when": "midnight",
+                "interval": 1,
+                "backupCount": 3,
+                "encoding": "utf-8",
+                "level": "INFO",
+            },
         },
         "root": {
             "handlers": ["console"],
             "level": "INFO",
+        },
+        "loggers": {
+            "missing_symbols_logger": {
+                "handlers": ["function_file"],
+                "level": "INFO",
+                "propagate": False,
+            },
         },
     }
 
@@ -28,3 +45,4 @@ def setup_logging() -> None:
 
 
 logger = logging.getLogger("stock_screener")
+special_logger = logging.getLogger("missing_symbols_logger")

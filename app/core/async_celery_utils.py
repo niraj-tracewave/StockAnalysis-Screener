@@ -8,6 +8,7 @@ from sqlalchemy import select, or_, delete
 from sqlalchemy.orm import selectinload
 
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset
+from app.core.logging_config import special_logger
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data
 from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json
 from app.db.postgres.sync_session import SessionLocalSync
@@ -47,6 +48,9 @@ async def fetch_and_store_company_data_from_top_50_async():
         skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json()
         existing_symbols.update(skipped_symbols_from_json)
         missing_symbols = [s for s in all_filtered_data if s not in existing_symbols]
+
+        special_logger.info(missing_symbols)
+        special_logger.info("--------------------------------------------------------------------------------------")
 
         def chunk_list(data, size):
             for i in range(0, len(data), size):
