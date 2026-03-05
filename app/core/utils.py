@@ -255,6 +255,9 @@ def normalize_symbol(symbol):
     if "-" in symbol:
         return symbol.split("-")[0].strip()
 
+    if not "-" in symbol:
+        return symbol
+
     # if already RELIANCE → skip
     return None
 
