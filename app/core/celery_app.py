@@ -34,7 +34,7 @@ celery_app.conf.beat_schedule = {
     #     "schedule": crontab(hour=18, minute=8),
     # },
     "fetch_30y_stock_chart_dat_from_nse_bse_new": {
-            "task": "fetch_30y_stock_chart_data",
+            "task": "fetch_and_update_30y_stock_chart_data",
             "schedule": crontab(hour=16, minute=30),
         },
 }

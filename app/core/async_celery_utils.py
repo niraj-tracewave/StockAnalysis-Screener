@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset
 from app.core.logging_config import setup_logging
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data
-from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json
+from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json, \
+    load_processed_symbols, save_processed_symbol
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
@@ -562,17 +563,16 @@ async def fetch_and_update_30y_stock_chart_data_async():
 
     result = db.execute(stmt)
     companies = result.scalars().all()
-
-    for company in companies:
+    processed_symbols = await load_processed_symbols()
+    new_process_symbol = []
+    unprocessed_companies = [
+        c for c in companies if c.nse_symbol not in processed_symbols
+    ][:400]
+    started_symbols = [c.nse_symbol for c in unprocessed_companies]
+    await save_processed_symbol(started_symbols, "current_processed_symbols")
+    for company in unprocessed_companies:
         try:
             print(f"\nProcessing company: {company.id} | {company.name}")
-
-            chart_stmt = select(ChartDataset).where(
-                ChartDataset.company_id == company.id,
-                ChartDataset.meta["days"].astext.in_(["1W", "1M", "6M", "1Y", "5Y", "10Y", "15Y", "20Y", "25Y"])
-            )
-            result = db.execute(chart_stmt)
-            charts = result.scalars().all()
 
             stmt = select(ChartDataset).where(
                 ChartDataset.company_id == company.id,
@@ -581,13 +581,6 @@ async def fetch_and_update_30y_stock_chart_data_async():
 
             exists_30y = db.scalar(stmt)
 
-            if charts:
-                db.execute(
-                    delete(ChartDataset).where(
-                        ChartDataset.company_id == company.id
-                    )
-                )
-                db.commit()
 
             if exists_30y:
                 series = symbol_type = identifier = None
@@ -719,6 +712,7 @@ async def fetch_and_update_30y_stock_chart_data_async():
                         raise
 
                 db.commit()
+                new_process_symbol.append(company.nse_symbol)
 
         except Exception as e:
             db.rollback()
@@ -727,3 +721,4 @@ async def fetch_and_update_30y_stock_chart_data_async():
             continue
 
     db.close()
+    await save_processed_symbol(new_process_symbol, "processed_symbols")

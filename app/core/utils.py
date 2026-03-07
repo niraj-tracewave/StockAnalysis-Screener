@@ -602,3 +602,60 @@ async def convert_to_quarterly_format(response_list):
         "headers": headers,
         "rows": rows
     }
+
+
+def get_today_file():
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"processed_symbols_{today}.json"
+
+
+async def load_processed_symbols():
+    file = get_today_file()
+    if os.path.exists(file):
+        with open(file, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return set()
+
+            data = json.loads(content)
+
+            processed = data.get("processed_symbols", [])
+            current = data.get("current_processed_symbols", [])
+
+            return set(processed) | set(current)
+    return set()
+
+
+async def save_processed_symbol(symbols, key):
+    file = get_today_file()
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        # add to processed
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        # remove from current
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
