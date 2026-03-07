@@ -65,7 +65,11 @@ def fetch_and_store_company_data_from_top_50():
     """
     from app.core.utils import load_angel_map
     load_angel_map()
-    asyncio.run(fetch_and_store_company_data_from_top_50_async())
+    # asyncio.run(fetch_and_store_company_data_from_top_50_async())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(fetch_and_store_company_data_from_top_50_async())
+    loop.close()
 
 
 @celery_app.task(
@@ -75,7 +79,11 @@ def fetch_30y_stock_chart_data():
     """
     Background task to store NSE company data
     """
-    asyncio.run(fetch_30y_stock_chart_data_async())
+    # asyncio.run(fetch_30y_stock_chart_data_async())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(fetch_30y_stock_chart_data_async())
+    loop.close()
 
 
 @celery_app.task(
@@ -85,4 +93,8 @@ def fetch_and_update_30y_stock_chart_data():
     """
     Background task to store NSE company data
     """
-    asyncio.run(fetch_and_update_30y_stock_chart_data_async())
+    # asyncio.run(fetch_and_update_30y_stock_chart_data_async())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(fetch_and_update_30y_stock_chart_data_async())
+    loop.close()
