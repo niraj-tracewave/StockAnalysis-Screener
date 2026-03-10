@@ -7,7 +7,6 @@ integrated_filing_url_header = {
     "method": "GET",
     "scheme": "https",
     "accept": "*/*",
-    # "accept-encoding": "gzip, deflate, br, zstd",
     "accept-language": "en-US,en;q=0.9",
     "priority": "u=1, i",
     "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
@@ -28,6 +27,17 @@ async def fetch_data(symbol, identifier):
             data = await response.json()
             return data
 
+async def fetch_nse_sme_data(symbol):
+    original_url = f"{integrated_filing_url}?index=sme&symbol={symbol}&type=Integrated%20Filing-%20Financials&page=1&size=20"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(original_url, headers={**integrated_filing_url_header, "path": f"/api/integrated-filing-results?index=sme&symbol={symbol}&type=Integrated%20Filing-%20Financials&page=1&size=20",
+                                                      "referer": f"https://www.nseindia.com/companies-listing/corporate-integrated-filing?symbol={symbol}&tabIndex=sme&&integratedType=integratedfilingfinancials"}) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data
+
 async def main_fetch_integrated_filing_financials(symbol, identifier):
     data = await fetch_data(symbol, identifier)
+    if data and not data.get("data"):
+        data = await fetch_nse_sme_data(symbol)
     return data

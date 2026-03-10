@@ -300,6 +300,26 @@ async def fetch_symbols_from_covered_symbol_json():
             return {}
     return {}
 
+async def fetch_symbols_from_covered_symbol_json_for_quarterly_result():
+    file_path = "covered_symbols_quarterly_result.json"
+    skipped_symbols = {}
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            old_skipped = set(data.get("processing", []))
+            old_unsaved = set(data.get("unsaved", []))
+            old_error = set(data.get("error", []))
+
+            print(f"{len(skipped_symbols)} skipped from json")
+            return old_skipped | old_unsaved | old_error
+
+        except Exception as e:
+            return {}
+    return {}
+
 async def normalize(text):
     if not text:
         return ""
@@ -570,13 +590,6 @@ async def build_node(item, node_map, quarter_index):
         await build_node(child, node["children"], quarter_index)
 
 async def convert_to_quarterly_format(response_list):
-
-    # sort quarters first
-    response_list = sorted(
-        response_list,
-        key=lambda q: q[-1]["date"]
-    )
-
     headers = []
     root_map = {}
 
@@ -656,6 +669,44 @@ async def save_processed_symbol(symbols, key):
         current_set = set(data.get("current_processed_symbols", []))
         current_set -= set(symbols)
         data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
+async def save_quarterly_result_processed_symbol(symbols, key):
+    file = "covered_symbols_quarterly_result.json"
+
+    data = {
+        "processing": [],
+        "unsaved": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "processing":
+        data["processing"].extend(symbols)
+        data["processing"] = list(set(data["processing"]))
+
+    if key == "unsaved":
+        data["unsaved"].extend(symbols)
+        data["unsaved"] = list(set(data["unsaved"]))
+
+    if key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+    elif key == "remove_processing":
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
