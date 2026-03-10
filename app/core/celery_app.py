@@ -13,8 +13,8 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Asia/Kolkata",
     enable_utc=True,
-    task_soft_time_limit=10200,  # 30 min
-    task_time_limit=10800,  # 60 min
+    task_soft_time_limit=10200,
+    task_time_limit=10800,
 )
 
 celery_app.autodiscover_tasks(["app.tasks"])
@@ -37,4 +37,8 @@ celery_app.conf.beat_schedule = {
             "task": "fetch_and_update_30y_stock_chart_data",
             "schedule": crontab(minute="*/20"),
         },
+    "fetch_quarterly_result_data_from_nse_bse": {
+        "task": "fetch_quarterly_result_data",
+        "schedule": crontab(minute="*/30"),
+    }
 }

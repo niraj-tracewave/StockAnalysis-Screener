@@ -1,9 +1,16 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric
+import enum
+
+from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric, Enum
 from sqlalchemy.orm import relationship
 
 from app.db.postgres.base import Base
 from sqlalchemy.dialects.postgresql import JSONB
 
+
+
+class ResultFormatEnum(str, enum.Enum):
+    standalone = "standalone"
+    consolidated = "consolidated"
 
 # ───────────────────────────────────────────────────────────────────────────────
 # CompanyStock Table
@@ -213,6 +220,8 @@ class QuarterlyResultDateset(Base):
     )
 
     values = Column(JSONB, nullable=False)
+
+    result_format =  Column(Enum(ResultFormatEnum), nullable=True)
 
     company = relationship(
         "CompanyStock",
