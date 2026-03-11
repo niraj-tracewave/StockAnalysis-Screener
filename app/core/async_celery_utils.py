@@ -802,6 +802,8 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
                         elif company.bse_code:
                             integrated_filing_financials_list = await main_bse_fetch_integrated_filing_financials(
                                 company.bse_code)
@@ -832,6 +834,8 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
                         elif company.nse_code:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
                             quarterly_result = []
