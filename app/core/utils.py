@@ -481,6 +481,34 @@ async def fetch_th_tr_from_table(rows_data):
             final_data.append(f_json)
     return final_data
 
+async def fetch_bse_th_tr_from_table(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        tds = row.find_all("td")
+        f_json = {
+            "heading": None,
+            "value": None,
+        }
+        if tds:
+            section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+            f_json['heading'] = section_name
+            if tds:
+                value=None
+                if len(tds) == 4:
+                    section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    f_json['heading'] = section_name
+                    value_tag = tds[2].find("ix:nonfraction")
+                    text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                    value = await parse_numeric(text)
+                f_json['value'] = value
+            final_data.append(f_json)
+    return final_data
+
 
 async def fetch_integrated_filing_financials_data_from_nse(url):
     try:
@@ -589,6 +617,44 @@ async def build_node(item, node_map, quarter_index):
     for child in children:
         await build_node(child, node["children"], quarter_index)
 
+async def bse_build_node(item, node_map, quarter_index, amount_type):
+    heading = item.get("heading")
+    value = item.get("value")
+    children = item.get("child", [])
+
+    if amount_type == "Millions":
+        if isinstance(value, (int, float)):
+            value = round(value / 10)
+    elif amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            value = round(value / 100, 2)
+    elif amount_type == "Crores":
+        value = value
+
+
+    if heading not in node_map:
+        node_map[heading] = {
+            "key": heading.lower().replace(" ", "_"),
+            "label": heading,
+            "type": "group" if children else "single",
+            "unit": "Rs Cr",
+            "values": [],
+            "children": {}
+        }
+
+    node = node_map[heading]
+
+    # IMPORTANT: create placeholders for previous quarters
+    if len(node["values"]) <= quarter_index:
+        node["values"].extend([None] * (quarter_index + 1 - len(node["values"])))
+
+    # set ONLY this quarter value
+    node["values"][quarter_index] = value
+
+    # process children recursively
+    for child in children:
+        await bse_build_node(child, node["children"], quarter_index, amount_type)
+
 async def convert_to_quarterly_format(response_list):
     headers = []
     root_map = {}
@@ -616,6 +682,107 @@ async def convert_to_quarterly_format(response_list):
         "rows": rows
     }
 
+async def bse_convert_to_quarterly_format(response_list):
+    headers = []
+    root_map = {}
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for item in quarter[:-1]:
+            await bse_build_node(item, root_map, quarter_index, meta.get("amount_type"))
+
+    # convert children dict → list
+    def finalize(node):
+        if node["children"]:
+            node["children"] = [finalize(child) for child in node["children"].values()]
+        else:
+            node.pop("children", None)
+        return node
+
+    rows = [finalize(node) for node in root_map.values()]
+
+    return {
+        "headers": headers,
+        "rows": rows
+    }
+
+
+async def fetch_bse_integrated_filing_financials_data_from(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+              "authority": "www.bseindia.com",
+              "method": "GET",
+              "path": "/",
+              "scheme": "https",
+              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+              "accept-encoding": "gzip, deflate, br, zstd",
+              "accept-language": "en-US,en;q=0.9",
+              "cache-control": "max-age=0",
+              "priority": "u=0, i",
+              "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+              "sec-ch-ua-mobile": "?0",
+              "sec-ch-ua-platform": "\"Linux\"",
+              "sec-fetch-dest": "document",
+              "sec-fetch-mode": "navigate",
+              "sec-fetch-site": "none",
+              "sec-fetch-user": "?1",
+              "upgrade-insecure-requests": "1",
+              "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            }
+        # # first hit homepage to get cookies
+        session.get("https://www.bseindia.com/", headers=headers)
+
+        path = url.split("www.bseindia.com/")[-1]
+
+        headers = {
+            "authority": "www.bseindia.com",
+            "method": "GET",
+            "path": path,
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
+            table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+
+            if table:
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+                final_data = await fetch_bse_th_tr_from_table(rows)
+                structured = await safe_build(final_data)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, amount_type
+
+            return [], None
+
+        return structured_with_values
+    except Exception as e:
+        return [], None
 
 def get_today_file():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -710,3 +877,15 @@ async def save_quarterly_result_processed_symbol(symbols, key):
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
+
+async def parse_financial_name(text: str):
+    parts = text.split("-")
+
+    result = {
+        "type": parts[0].lower(),          # Standalone / Consolidated
+        "month": parts[1],         # Dec / Sep / Mar
+        "period": parts[2].lower(),        # Qtr / Hly / Ann
+        "year": int(parts[3])      # 2025
+    }
+
+    return result

@@ -703,6 +703,17 @@ YEAR_OR_MONTY_TO_DAYS_MAP = {
 PARENT_CHILD_MAP = {
     "income": [
         "revenue from operations",
+        "interest income",
+        "dividend income",
+        "rental income",
+        "fees and commission income",
+        "net gain on fair value changes",
+        "net gain on derecognition of financial instruments under amortised cost category",
+        "sale of products (including excise duty)",
+        "sale of services",
+        "other revenue from operations",
+        "total other revenue from operations",
+        "total revenue from operations",
         "other income",
         "total income"
     ],
@@ -714,6 +725,10 @@ PARENT_CHILD_MAP = {
         "employee benefit expense",
         "finance costs",
         "depreciation, depletion and amortisation expense",
+        "fees and commission expense",
+        "net loss on fair value changes",
+        "net loss on derecognition of financial instruments under amortised cost category",
+        "impairment on financial instruments",
         "other expenses",
         "total other expenses",
         "total expenses"

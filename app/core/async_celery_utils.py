@@ -15,9 +15,11 @@ from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_sym
 from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json, \
     load_processed_symbols, save_processed_symbol, fetch_integrated_filing_financials_data_from_nse, \
     convert_to_quarterly_format, fetch_symbols_from_covered_symbol_json_for_quarterly_result, \
-    save_quarterly_result_processed_symbol
+    save_quarterly_result_processed_symbol, parse_financial_name, fetch_bse_integrated_filing_financials_data_from, \
+    bse_convert_to_quarterly_format
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
+from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
 from scripts.fetch_integrated_filling_financials import main_fetch_integrated_filing_financials
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
@@ -801,7 +803,35 @@ async def fetch_stock_quarterly_result_data_async():
                                 db.add(company_stock)
                                 db.flush()
                         elif company.bse_code:
-                            unsaved_symbols.append(company.nse_symbol)
+                            integrated_filing_financials_list = await main_bse_fetch_integrated_filing_financials(
+                                company.bse_code)
+                            quarterly_result = []
+                            if integrated_filing_financials_list:
+                                response_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
+                                    financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
+                                    qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                    consolidated = financial_name_obj.get("type")
+                                    ixbrl = integrated_filing_obj.get("xbrlurl")
+                                    if consolidated == "consolidated" and financial_name_obj.get("period") == "qtr":
+                                        url = f"https://www.bseindia.com{ixbrl}"
+                                        output, amount_type = await fetch_bse_integrated_filing_financials_data_from(url)
+                                        output.append({
+                                            "date": qe_date,
+                                            "consolidated": consolidated,
+                                            "amount_type": amount_type
+                                        })
+                                        response_list.append(output)
+                                if response_list:
+                                    quarterly_result = await bse_convert_to_quarterly_format(response_list)
+                            if quarterly_result:
+                                company_stock = QuarterlyResultDateset(
+                                    company_id=company.id,
+                                    values=quarterly_result,
+                                    result_format=ResultFormatEnum.consolidated
+                                )
+                                db.add(company_stock)
+                                db.flush()
                         elif company.nse_code:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
                             quarterly_result = []
