@@ -78,7 +78,7 @@ class RawBSEClient:
             "stockTrading": ("StockTrading/w", {
                 "flag": "",
                 "quotetype": "EQ",
-                "scripcode":501831,
+                "scripcode":scripcode,
             }),
 
             "priceGraph": ("StockReachGraph/w", {

@@ -889,3 +889,52 @@ async def parse_financial_name(text: str):
     }
 
     return result
+
+async def update_nse_bse_scrip_code_load_processed_symbols():
+    file = "update_nse_bse_scrip_code.json"
+    if os.path.exists(file):
+        with open(file, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return set()
+
+            data = json.loads(content)
+
+            processed = data.get("processed_symbols", [])
+            current = data.get("current_processed_symbols", [])
+
+            return set(processed) | set(current)
+    return set()
+
+async def update_nse_bse_scrip_code_save_processed_symbol(symbols, key):
+    file = "update_nse_bse_scrip_code.json"
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        # remove from current
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)

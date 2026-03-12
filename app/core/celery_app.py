@@ -40,5 +40,9 @@ celery_app.conf.beat_schedule = {
     "fetch_quarterly_result_data_from_nse_bse": {
         "task": "fetch_quarterly_result_data",
         "schedule": crontab(minute="*/30"),
+    },
+    "fetch_and_update_nse_bse_scrip_code": {
+        "task": "update_nse_bse_scrip_code",
+        "schedule": crontab(minute="*/10"),
     }
 }

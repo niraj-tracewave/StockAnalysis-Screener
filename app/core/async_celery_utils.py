@@ -11,12 +11,13 @@ from sqlalchemy.orm import selectinload
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, QuarterlyResultDateset, \
     ResultFormatEnum
 from app.core.logging_config import setup_logging
-from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data
+from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, fetch_bse_data
 from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json, \
     load_processed_symbols, save_processed_symbol, fetch_integrated_filing_financials_data_from_nse, \
     convert_to_quarterly_format, fetch_symbols_from_covered_symbol_json_for_quarterly_result, \
     save_quarterly_result_processed_symbol, parse_financial_name, fetch_bse_integrated_filing_financials_data_from, \
-    bse_convert_to_quarterly_format
+    bse_convert_to_quarterly_format, update_nse_bse_scrip_code_load_processed_symbols, \
+    update_nse_bse_scrip_code_save_processed_symbol
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -882,3 +883,52 @@ async def fetch_stock_quarterly_result_data_async():
         await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
         await save_quarterly_result_processed_symbol(error_symbols, "error")
         await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
+
+async def update_nse_bse_scrip_code_async():
+    db = SessionLocalSync()
+    stmt = (
+        select(CompanyStock)
+        .execution_options(yield_per=100)
+    )
+
+    result = db.execute(stmt)
+    companies = result.scalars().all()
+    processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
+    new_process_symbol = []
+    unprocessed_companies = [
+        c for c in companies if c.nse_symbol not in processed_symbols
+    ][:25]
+    started_symbols = [c.nse_symbol for c in unprocessed_companies]
+    await update_nse_bse_scrip_code_save_processed_symbol(started_symbols, "current_processed_symbols")
+    for company in unprocessed_companies:
+        try:
+            print(f"\nProcessing company: {company.id} | {company.name}")
+            nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+            bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+
+            nse_code = company.nse_code
+            bse_code = company.bse_code
+            if nse_company_list and bse_company_list:
+                platform = "NSE, BSE"
+                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
+                bse_code = bse_company_list[0].get("bse_code") if bse_company_list else None
+            elif nse_company_list:
+                platform = "NSE"
+                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
+            elif bse_company_list:
+                platform = "BSE"
+                bse_code = bse_company_list[0].get("bse_code") if bse_company_list else None
+
+            company.bse_code = bse_code
+            company.nse_code = nse_code
+
+            db.commit()
+            new_process_symbol.append(company.nse_symbol)
+
+        except Exception as e:
+            db.rollback()
+            print(f"\nFAILED company: {company.id} | {company.name}")
+            print("Error:", str(e))
+            continue
+    db.close()
+    await update_nse_bse_scrip_code_save_processed_symbol(new_process_symbol, "processed_symbols")
