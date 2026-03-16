@@ -1,7 +1,8 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
+from dateutil.relativedelta import relativedelta
 from fastapi import Depends
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, selectinload
@@ -1019,7 +1020,22 @@ class CompanyStockFetchService:
                     if chart.meta and chart.meta.get("days") == "30Y":
                         values = chart.values
                         day_count = YEAR_OR_MONTY_TO_DAYS_MAP.get(days)
-                        filtered_values = values[0:day_count]
+                        now = datetime.now()
+                        yesterday = now - timedelta(days=1)
+                        yesterday = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                        if "Y" in days:
+                            start_date = yesterday - relativedelta(years=day_count)
+                        elif "W" in days:
+                            start_date = yesterday - timedelta(weeks=day_count)
+                        elif "M" in days:
+                            start_date = yesterday - relativedelta(months=day_count)
+                        dt = datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0, tzinfo=timezone.utc)
+                        timestamp_ms = int(dt.timestamp() * 1000)
+                        filtered_values = [
+                            v for v in values
+                            if v[0] > timestamp_ms
+                        ]
 
                         chart_data.append({
                             "metric": chart.metric,
