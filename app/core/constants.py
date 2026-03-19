@@ -701,6 +701,64 @@ YEAR_OR_MONTY_TO_DAYS_MAP = {
 }
 
 PARENT_CHILD_MAP = {
+    "interest earned": [
+        "interest or discount on advances or bills",
+        "income on investments",
+        "interest on balances with reserve bank of India and other inter bank funds",
+        "others",
+        "total interest earned"
+    ],
+
+    "interest expenses": [],
+    "operating expenses": [
+        "employees cost",
+        "details of other operating expenses",
+        "description of other operating expenses",
+        "claims and benefits paid and other expenses pertaining to insurance business",
+        "other operating expenses",
+        "total other operating Expenses",
+        "total Operating Expenses",
+    ],
+    "Total expenditure excluding provisions and contingencies": [],
+    "Operating profit before provision and contingencies": [],
+    "Provisions other than tax and contingencies": [],
+    "Total profit (loss) from ordinary activities before tax": [],
+    "Provision for Tax": [],
+    "Net profit (loss) from ordinary activities after tax": [],
+    "Extraordinary items net of tax expenses": [],
+    "Net profit (loss) for the period": [],
+    "Share of profit (loss) of associates": [],
+    "Profit (loss) of minority interest": [],
+    "Net Profit (loss) after taxes minority interest and share of profit (loss) of associates": [],
+    "Details of equity share capital [Abstract]": [
+      "Paid-up equity share capital",
+      "Face value of equity share capital"
+    ],
+    "Reserve excluding revaluation reserves (as per balance sheet of previous accounting year)": [],
+    "Analytical ratios": [
+        "Percentage of share held by government of India",
+        "Capital adequacy ratio",
+        "CET 1 ratio",
+        "Additional Tier 1 ratio"
+    ],
+    "Earnings per share before extraordinary items": [
+        "Basic earnings per share before extraordinary items",
+        "Diluted earnings per share before extraordinary items",
+    ],
+
+    "Earnings per share after extraordinary items": [
+        "Basic earnings per share after extraordinary items",
+        "Diluted earnings per share after extraordinary items"
+    ],
+
+    "NPA Ratios": [
+        "Amount of gross non-performing assets",
+        "Amount of net non-performing assets",
+        "% of gross NPAs",
+        "% of net NPAs",
+        "Return on assets",
+    ],
+
     "income": [
         "revenue from operations",
         "interest income",
