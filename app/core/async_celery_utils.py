@@ -17,7 +17,8 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     convert_to_quarterly_format, fetch_symbols_from_covered_symbol_json_for_quarterly_result, \
     save_quarterly_result_processed_symbol, parse_financial_name, fetch_bse_integrated_filing_financials_data_from, \
     bse_convert_to_quarterly_format, update_nse_bse_scrip_code_load_processed_symbols, \
-    update_nse_bse_scrip_code_save_processed_symbol
+    update_nse_bse_scrip_code_save_processed_symbol, update_nse_bse_price_data_load_processed_symbols, \
+    update_nse_bse_price_data_save_processed_symbol
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -932,3 +933,99 @@ async def update_nse_bse_scrip_code_async():
             continue
     db.close()
     await update_nse_bse_scrip_code_save_processed_symbol(new_process_symbol, "processed_symbols")
+
+
+async def update_nse_bse_stock_information_async():
+    db = SessionLocalSync()
+    stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+    file_name = "update_nse_bse_price_data.json"
+    error_symbols = []
+    result = db.execute(stmt)
+    companies = result.scalars().all()
+    processed_symbols = await update_nse_bse_price_data_load_processed_symbols(file_name)
+    new_process_symbol = []
+    unprocessed_companies = [
+        c for c in companies if c.nse_symbol not in processed_symbols
+    ][:30]
+    started_symbols = [c.nse_symbol for c in unprocessed_companies]
+    await update_nse_bse_price_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
+    for company in unprocessed_companies:
+        try:
+            roe = company.details.roe
+            current_price = company.details.current_price
+            high_price = company.details.high_price
+            low_price = company.details.low_price
+            pe_ratio = company.details.pe_ratio
+            face_value = company.details.face_value
+            nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+            bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+            if nse_company_list and bse_company_list:
+                security_code = bse_company_list[0].get("bse_code")
+                nse_data = await main(company.nse_symbol)
+                bse_data = await main_bse(security_code)
+                header_data = bse_data.get('header')
+                symbol_data = nse_data.get('symbolData')
+                equity_response = symbol_data.get('equityResponse')[0]
+                nse_metadata = equity_response.get('metaData')
+                trade_info = equity_response.get('tradeInfo')
+                sec_info = equity_response.get('secInfo')
+                current_price = trade_info.get('lastPrice')
+                face_value = trade_info.get('faceValue')
+                high_price = nse_metadata.get('dayHigh')
+                low_price = nse_metadata.get('dayLow')
+                pe_ratio = sec_info.get('pdSymbolPe')
+                roe = header_data.get('ROE')
+            elif nse_company_list:
+                nse_data = await main(company.nse_symbol)
+                symbol_data = nse_data.get('symbolData')
+                equity_response = symbol_data.get('equityResponse')[0]
+                nse_metadata = equity_response.get('metaData')
+                trade_info = equity_response.get('tradeInfo')
+                sec_info = equity_response.get('secInfo')
+                current_price = trade_info.get('lastPrice')
+                face_value = trade_info.get('faceValue')
+                high_price = nse_metadata.get('dayHigh')
+                low_price = nse_metadata.get('dayLow')
+                pe_ratio = sec_info.get('pdSymbolPe')
+            elif bse_company_list:
+                security_code = bse_company_list[0].get("bse_code")
+                bse_data = await main_bse(security_code)
+                header_data = bse_data.get('header')
+                script_header = bse_data.get('scriptHeader')
+                header = script_header.get('Header')
+                price_graph = bse_data.get('priceGraph')
+                current_price = price_graph.get('CurrVal') or header.get('LTP')
+                if current_price:
+                    current_price = float(current_price)
+                face_value = header_data.get('FaceVal')
+                if face_value:
+                    face_value = float(face_value)
+                high_price = header.get('High')
+                low_price = header.get('Low')
+                pe_ratio = header_data.get('PE')
+                roe = header_data.get('ROE')
+            company.details.roe = float(roe) if roe and roe != '-' else None
+            company.details.current_price = current_price
+            company.details.high_price = high_price
+            company.details.low_price = low_price
+            company.details.pe_ratio = float(pe_ratio) if pe_ratio and pe_ratio != '-' else None
+            company.details.face_value = face_value
+            db.commit()
+            new_process_symbol.append(company.nse_symbol)
+
+        except Exception as symbol_error:
+            db.rollback()
+            error_symbols.append(company.nse_symbol)
+            print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
+            continue
+
+    await update_nse_bse_price_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+    await update_nse_bse_price_data_save_processed_symbol(error_symbols, "error", file_name)
