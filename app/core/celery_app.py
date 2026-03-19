@@ -44,5 +44,9 @@ celery_app.conf.beat_schedule = {
     "fetch_and_update_nse_bse_scrip_code": {
         "task": "update_nse_bse_scrip_code",
         "schedule": crontab(minute="*/10"),
+    },
+    "fetch_and_update_nse_bse_stock_information": {
+        "task": "update_nse_bse_stock_information",
+        "schedule": crontab(minute="*/11"),
     }
 }
