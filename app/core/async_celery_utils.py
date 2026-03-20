@@ -788,10 +788,11 @@ async def fetch_stock_quarterly_result_data_async():
                                     if qe_date:
                                         formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
                                     if consolidated == "Consolidated":
-                                        output = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                                        output, amount_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
                                         output.append({
                                             "date": formatted or qe_date,
-                                            "consolidated": consolidated
+                                            "consolidated": consolidated,
+                                            "amount_type": amount_type
                                         })
                                         response_list.append(output)
                                 if response_list:

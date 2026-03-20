@@ -450,6 +450,43 @@ async def parse_numeric(text):
         return -value if is_negative else value
     except ValueError:
         return None
+async def extract_text(tag):
+    if tag.find("b"):
+        return tag.find("b").get_text(strip=True)
+    return tag.get_text(" ", strip=True)
+
+async def get_current_value(ths):
+    if not ths:
+        return None
+
+    # ❌ Skip header row
+    first_text = ths[0].get_text(strip=True).lower()
+    if "particulars" in first_text:
+        return None
+
+    # 🔍 Extract all numeric values from all <th>
+    values = []
+
+    for th in ths:
+        # Prefer <b> tags (NSE pattern)
+        bs = th.find_all("b")
+        for b in bs:
+            text = b.get_text(strip=True)
+            if re.search(r"\d", text):
+                values.append(text)
+
+        # fallback if no <b>
+        if not bs:
+            text = th.get_text(" ", strip=True)
+            if re.search(r"\d", text):
+                values.append(text)
+
+    # ❗ Remove serial number (like 6, 10, 17)
+    if values and len(values[0]) <= 3:
+        values = values[1:]
+
+    # ✅ Return ONLY current value
+    return values[0] if values else None
 
 async def fetch_th_tr_from_table(rows_data):
     final_data = []
@@ -459,24 +496,41 @@ async def fetch_th_tr_from_table(rows_data):
         if not tds and not ths:
             continue
 
-        ths = row.find_all("th")
+        ths = row.find_all("th", recursive=False)
         tds = row.find_all("td")
-        f_json = {
+        f_json: dict[str, str | None] = {
             "heading": None,
             "value": None,
         }
         if ths:
-            section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+            if len(ths) > 1:
+                th = ths[1]
+                print(th, "---------------th------------------")
+                for td in th.find_all("td"):
+                    td.extract()
+                print(th, "------ttt-----")
+                section_name = th.get_text(strip=True)
+            else:
+                section_name = None
+            # section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+            print(section_name)
             f_json['heading'] = section_name
             if tds:
                 if len(tds) == 3:
-                    section_name = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                    section_name = await extract_text(tds[0]) if len(tds) > 1 else None
                     f_json['heading'] = section_name
                     text = tds[1].get_text(strip=True) if len(tds) > 1 else None
                     value = await parse_numeric(text)
                 else:
-                    text = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                    text = await extract_text(tds[0]) if len(tds) > 1 else None
                     value = await parse_numeric(text)
+                f_json['value'] = value
+            else:
+                # print(ths)
+                value = await get_current_value(ths)
+                value = await parse_numeric(value)
+                # print(value)
+                # print("--------------------------------------")
                 f_json['value'] = value
             final_data.append(f_json)
     return final_data
@@ -509,6 +563,20 @@ async def fetch_bse_th_tr_from_table(rows_data):
             final_data.append(f_json)
     return final_data
 
+
+async def extract_table_as_dict(soup, table):
+    data = {}
+
+    for row in table.find_all("tr"):
+        cols = row.find_all(["td", "th"])
+
+        if len(cols) >= 2:
+            key = cols[0].get_text(strip=True)
+            value = cols[1].get_text(strip=True)
+
+            data[key] = value
+
+    return data
 
 async def fetch_integrated_filing_financials_data_from_nse(url):
     try:
@@ -556,10 +624,18 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
         resp = session.get(url, headers=headers)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
+            heading = soup.find("h3", string=lambda x: x and "General information" in x)
+            gITable = heading.find_next("table")
+            table_data = await extract_table_as_dict(soup, gITable)
+            value = table_data.get("Level of rounding used in financial results", "Crores")
             tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+            other_tables = soup.find_all("table", class_="customTablewidth3Col")
             table = None
-            if tables:
+            if tables and len(tables) > 1:
                 for table1 in tables[:1]:
+                    table = table1
+            elif other_tables:
+                for table1 in other_tables[:1]:
                     table = table1
             else:
                 tables = soup.find_all("table")
@@ -577,21 +653,25 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                 structured,
                 final_data
             )
-            return structured_with_values
+            return structured_with_values, value
 
-        return structured_with_values
+        return structured_with_values, None
     except Exception as e:
-        return []
+        return [], None
 
 
-async def build_node(item, node_map, quarter_index):
+async def build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
     value = item.get("value")
     children = item.get("child", [])
 
     # convert lakhs → crores
-    if isinstance(value, (int, float)):
-        value = value / 100
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            value = round(value / 100, 2)
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            value = round(value / 1_00_00_000, 2)
 
 
     if heading not in node_map:
@@ -615,7 +695,7 @@ async def build_node(item, node_map, quarter_index):
 
     # process children recursively
     for child in children:
-        await build_node(child, node["children"], quarter_index)
+        await build_node(child, node["children"], quarter_index, amount_type)
 
 async def bse_build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
@@ -665,7 +745,7 @@ async def convert_to_quarterly_format(response_list):
         headers.append(meta.get("date"))
 
         for item in quarter[:-1]:
-            await build_node(item, root_map, quarter_index)
+            await build_node(item, root_map, quarter_index, meta.get("amount_type"))
 
     # convert children dict → list
     def finalize(node):
