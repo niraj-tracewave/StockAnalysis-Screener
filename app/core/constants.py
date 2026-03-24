@@ -736,8 +736,8 @@ PARENT_CHILD_MAP = {
     ],
     "Reserve excluding revaluation reserves (as per balance sheet of previous accounting year)": [],
     "Analytical ratios": [
-        "Percentage of share held by government of India",
-        "Capital adequacy ratio",
+        "percentage of share held by government of India",
+        "capital adequacy ratio",
         "CET 1 ratio",
         "Additional Tier 1 ratio"
     ],
@@ -849,4 +849,213 @@ PARENT_CHILD_MAP = {
     "Interest service coverage ratio": [],
     "Disclosure of notes on financial results": [],
 
+}
+
+
+
+PARENT_CHILD_MAP_NBFC_INDAS = {
+    "income": [
+        "revenue from operations",
+        "interest income",
+        "dividend income",
+        "rental income",
+        "fees and commission income",
+        "net gain on fair value changes",
+        "net gain on derecognition of financial instruments under amortised cost category",
+        "sale of products (including excise duty)",
+        "sale of services",
+        "other revenue from operations",
+        "income on derecognised (assigned) loans",
+        "other operating income",
+        "total other revenue from operations",
+        "total revenue from operations",
+        "other income",
+        "total income"
+    ],
+
+    "expenses": [
+        "cost of materials consumed",
+        "purchases of stock-in-trade",
+        "changes in inventories of finished goods, work-in-progress and stock-in-trade",
+        "employee benefit expense",
+        "finance costs",
+        "depreciation, depletion and amortisation expense",
+        "fees and commission expense",
+        "net loss on fair value changes",
+        "net loss on derecognition of financial instruments under amortised cost category",
+        "impairment on financial instruments",
+        "other expenses",
+        "total other expenses",
+        "total expenses"
+    ],
+
+    "other expenses": [
+        "others"
+    ],
+
+    "Total profit before exceptional items and tax": [],
+    "Exceptional items": [],
+    "Total profit before tax": [],
+    "Tax expense": [],
+    "Current tax": [],
+    "Deferred tax": [],
+    "Total tax expenses": [],
+    "Net Profit Loss for the period from continuing operations": [],
+    "Profit (loss) from discontinued operations before tax": [],
+    "Tax expense of discontinued operations": [],
+    "Net profit (loss) from discontinued operation after tax": [],
+    "Share of profit (loss) of associates and joint ventures accounted for using equity method": [],
+    "Total profit (loss) for period": [],
+    "Other comprehensive income net of taxes": [],
+    "Total Comprehensive Income for the period": [],
+    "Total profit or loss, attributable to": [
+        "Profit or loss, attributable to owners of parent",
+        "Total profit or loss, attributable to non-controlling interests",
+    ],
+    "Total Comprehensive income for the period attributable to": [
+        "Comprehensive income for the period attributable to owners of parent",
+        "Total comprehensive income for the period attributable to owners of parent non-controlling interests",
+    ],
+
+    "Details of equity share capital": [
+        "Paid-up equity share capital",
+        "Face value of equity share capital"
+    ],
+    "Reserves excluding revaluation reserve": [],
+    "Earnings per share": [
+        "Earnings per equity share for continuing operations",
+        "Earnings per equity share",
+        "Earnings per equity share for discontinued operations",
+        "Basic earnings per share",
+        "Diluted earnings per share"
+    ],
+    "Earnings per equity share for continuing operations": [
+        "Basic earnings per share from continuing operations",
+        "Diluted earnings per share from continuing operations",
+    ],
+    "Earnings per equity share for discontinued operations": [
+        "Basic earnings per share from discontinued operations",
+        "Diluted earnings per share from discontinued operations"
+    ],
+    "Debt equity ratio": [],
+    "Debt service coverage ratio": [],
+    "Interest service coverage ratio": [],
+    "Disclosure of notes on financial results": [],
+
+}
+
+PARENT_CHILD_MAP_GI = {
+    "Operating income": [
+        "Gross Premiums Written",
+        "Net Premium written",
+        "Premium Earned (Net)",
+        "Income from investments (net)",
+        "Other income",
+        "Other income -Foreign exchange Gain/( Loss)",
+        "Total other income",
+        "Total income"
+    ],
+
+    "Operating expenses": [
+        "Commissions & Brokerage (net)",
+        "Net commission",
+        "Operating Expenses related to insurance business",
+        "Employees remuneration and welfare expenses",
+        "Other operating expenses",
+        "Total other operating expenses",
+        "Total operating expenses related to insurance business",
+        "Premium Deficiency",
+        "Incurred Claims",
+        "Claims Paid",
+        "Change in Outstanding Claims (incl. IBNR/IBNER)",
+        "Total Incurred claims",
+        "Total Expense",
+        "Underwriting Profit(Loss)",
+        "Provisions for doubtful debts (including bad debts written off)",
+        "Provisions for diminution in value of investments",
+        "Operating Profit/loss:",
+        "Appropriations",
+        "Transfer to Profit and Loss A/c",
+        "Transfer to reserves"
+    ],
+
+    "Income in shareholder's account": [
+        "Transfer from Policyholders' Fund",
+        "Income from investments",
+        "Other income",
+        "Share of Profit in Associates Companies",
+        "Total other income",
+        "Total income"
+    ],
+
+    "Expenses": [
+        "Expenses other than those related to insurance business",
+        "Provisions for doubtful debts (including bad debts written off)",
+        "Provisions for diminution in value of investments",
+        "Total Expense"
+    ],
+
+    "Profit / Loss before extraordinary items": [],
+    "Extraordinary Items": [],
+    "Profit/ (loss) before tax": [],
+    "Provision for tax": [],
+    "Profit / (loss) after tax": [],
+    "Divident per share": [
+        "Interim Dividend",
+        "Final dividend"
+    ],
+    "Opening Balance and Appropriations from PAT (Net)": [],
+    "Profit (loss) carried to balance sheet": [],
+    "Paid up equity capital": [],
+    "Reserve and Surplus (Excluding Revaluation Reserve)": [],
+    "Fair value change account and revaluation reserve": [],
+    "Assets": [
+        "Investments",
+        "Shareholders Fund",
+        "Policyholders' Fund",
+        "Total investments",
+        "Other Assets (Net of current liabilities and provisions)",
+        "Total assets"
+    ],
+
+    "Analytical Ratios": [
+        "Solvency ratio",
+        "Expenses of management ratio",
+        "Incurred Claim Ratio",
+        "Net retention ratio",
+        "Combined ratio",
+        "Earning per share",
+        "NPA ratios",
+        "Yield on Investments",
+        "Public shareholding (in case of public sector insurance companies)"
+    ],
+
+    "Earning per share": [
+        "Basic and diluated EPS before extraordinary items (net of tax expense) for the period (not to be annualized)",
+        "Basic and diluted EPS after extraordinary items (net of tax expense) for the period (not to be annualized)"
+    ],
+    "NPA ratios": [
+        "Gross NPAs",
+        "Net NPAs",
+        "Percentage of Gross NPAs",
+        "Percentage of net NPAs"
+    ],
+
+    "Yield on Investments": [
+        "Without unrealized gains",
+        "With unrealised gains"
+    ],
+
+    "Public shareholding (in case of public sector insurance companies)": [
+        "Number of shares",
+        "Percentage of shareholding",
+        "Percentage of government holding"
+    ],
+
+    "Investor Compliants": [
+        "No of investor complaints pending at the beginning of the period",
+        "No of investor complaints during the period",
+        "No of investor complaints disposed off during the period",
+        "No of investor complaints remaining unresolved at the end of the period"
+    ]
 }

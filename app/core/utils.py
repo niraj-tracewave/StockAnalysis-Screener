@@ -12,7 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
-from app.core.constants import PARENT_CHILD_MAP
+from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI
 
 settings = get_settings()
 
@@ -430,10 +430,15 @@ async def build_hierarchy(flat_data, parent_child_map):
     return roots
 
 
-async def safe_build(data):
+async def safe_build(data, file_url=None):
     import json
     if isinstance(data, str):
         data = json.loads(data)
+
+    if file_url and "NBFC_INDAS" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
+    if file_url and "GI" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_GI)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -455,7 +460,7 @@ async def extract_text(tag):
         return tag.find("b").get_text(strip=True)
     return tag.get_text(" ", strip=True)
 
-async def get_current_value(ths):
+async def get_current_valuess(ths):
     if not ths:
         return None
 
@@ -487,6 +492,108 @@ async def get_current_value(ths):
 
     # ✅ Return ONLY current value
     return values[0] if values else None
+
+
+async def extract_heading(tag):
+    """Extract clean heading text"""
+    if not tag:
+        return None
+    heading = tag.get_text(" ", strip=True)
+    return heading
+
+async def extract_heading_one(tag):
+    """Extract clean heading text"""
+    if tag:
+        ths = tag.find_all("th")
+        if ths:
+            for b in ths[0].find("b"):
+                return b.get_text(strip=True)
+        return None
+
+    return None
+
+async def extract_numeric_values(tag):
+    """Extract all numeric values from a tag (handles nested/broken HTML)"""
+    if not tag:
+        return []
+
+    values = []
+
+    # First try: <b> tags (NSE pattern)
+    for b in tag.find_all("b"):
+        text = b.get_text(strip=True)
+        if re.search(r"\d", text):
+            values.append(text)
+
+    # Fallback: direct text (if no <b>)
+    if not values:
+        text = tag.get_text(" ", strip=True)
+        if re.search(r"\d", text):
+            values.append(text)
+
+    return values
+
+
+async def parse_row_dynamic(ths):
+    """Fully dynamic parser for NSE table rows"""
+
+    if not ths:
+        return None
+    # ❌ Skip header rows
+    first_text = ths[0].get_text(strip=True).lower()
+    # if "particulars" in first_text:
+    #     return None
+    print(first_text, "-------------7777", ths)
+    data = {
+        "heading": None,
+        "current_value": None,
+        "previous_value": None,
+    }
+
+    # ✅ Step 1: Extract heading (usually 2nd th)
+    if len(ths) >= 2:
+        data["heading"] = await extract_heading(ths[1])
+    elif len(ths) == 1:
+        data["heading"] = await extract_heading_one(ths[0])
+
+    # ✅ Step 2: Extract all numeric values from ALL ths
+    all_values = []
+    for th in ths:
+        vals = await extract_numeric_values(th)
+        all_values.extend(vals)
+
+    # ❗ Remove serial number (like 6, 10, 17)
+    if all_values and len(all_values[0]) <= 3:
+        all_values = all_values[1:]
+
+    # ✅ Assign values dynamically
+    if len(all_values) >= 1:
+        data["current_value"] = all_values[0]
+
+    if len(all_values) >= 2:
+        data["previous_value"] = all_values[1]
+
+    return data
+
+async def get_heading_from_row(row):
+    texts = []
+
+    # get all text pieces
+    for t in row.stripped_strings:
+        # skip pure numbers
+        if re.fullmatch(r"\d+(\.\d+)?", t):
+            continue
+        if re.fullmatch(r"\([a-zA-ZivxIVX]+\)", t):
+            continue
+
+        texts.append(t)
+
+    # remove first number if it's serial (like 16)
+    if texts and texts[0].isdigit():
+        texts = texts[1:]
+
+    # join remaining → heading
+    return " ".join(texts) if texts else None
 
 async def fetch_th_tr_from_table(rows_data):
     final_data = []
@@ -521,18 +628,105 @@ async def fetch_th_tr_from_table(rows_data):
                     f_json['heading'] = section_name
                     text = tds[1].get_text(strip=True) if len(tds) > 1 else None
                     value = await parse_numeric(text)
+                elif len(tds) == 2 and len(ths) == 2:
+                    # print(ths, tds)
+                    section_name = await extract_text(ths[1]) if len(ths) == 2 else None
+                    # print(section_name)
+                    f_json['heading'] = section_name
+                    text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+                    value = await parse_numeric(text)
+                    # print(value)
+                    # print("---------------------------------------------------2222222")
+                elif len(tds) == 2 and len(ths) == 1:
+                    print(ths, tds)
+                    section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                    print(section_name)
+                    f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                    text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+
+                    value = await parse_numeric(text)
+                    print(value)
+                    print("---------------------------------------------------111111111")
+
                 else:
+                    # print(ths, tds)
+                    # print("---------------------------------------------------")
                     text = await extract_text(tds[0]) if len(tds) > 1 else None
                     value = await parse_numeric(text)
                 f_json['value'] = value
             else:
-                # print(ths)
-                value = await get_current_value(ths)
-                value = await parse_numeric(value)
-                # print(value)
-                # print("--------------------------------------")
-                f_json['value'] = value
+                # print(section_name, "----heading-----")
+                print(ths)
+                j_value = await parse_row_dynamic(ths)
+                print(j_value, "-------j_value___")
+                if j_value:
+                    j_heading = j_value.get("heading")
+                    if j_heading:
+                        result = j_heading.split()
+                        if result:
+                            remove_vals = {j_value.get('current_value'), j_value.get('previous_value')}
+
+                            data = [x for x in result if x not in remove_vals]
+                            heading = " ".join(data)
+                        # value = await parse_numeric(j_value.get("current_value"))
+                        # # print(value)
+                        # # print("--------------------------------------")
+                        if heading:
+                            f_json['heading'] = heading
+                    value = await parse_numeric(j_value.get("current_value"))
+                    f_json['value'] = value
+
             final_data.append(f_json)
+    return final_data
+
+
+async def fetch_th_tr_from_gi_table(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        # print(ths, tds)
+        if tds:
+            if len(tds) == 3:
+                section_name = await extract_text(tds[1]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+                # text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                # value = await parse_numeric(text)
+
+            elif len(tds) == 4:
+                print(ths, tds)
+                section_name = await extract_text(tds[1]) if len(tds) == 4 else None
+                print(section_name)
+                f_json['heading'] = section_name
+                text = tds[2].get_text(strip=True) if len(tds) == 4 else None
+                value = await parse_numeric(text)
+                print(value)
+                print("---------------------------------------------------2222222")
+                f_json['value'] = value
+        else:
+            # print(section_name, "----heading-----")
+            # print(ths, tds)
+            section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+            # print(section_name)
+            f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+            text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+
+            value = await parse_numeric(text)
+            # print(value)
+            # print("---------------------------------------------------111111111")
+            f_json['value'] = value
+
+        final_data.append(f_json)
+    print(final_data, "----fffff")
     return final_data
 
 async def fetch_bse_th_tr_from_table(rows_data):
@@ -594,10 +788,6 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
         # first hit homepage to get cookies
         session.get("https://www.nseindia.com", headers=headers)
 
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_BANKING_135572_17012026162609_iXBRL_WEB.html"
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
-
         path = url.split("nsearchives.nseindia.com")[-1]
 
         headers = {
@@ -628,32 +818,57 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
             gITable = heading.find_next("table")
             table_data = await extract_table_as_dict(soup, gITable)
             value = table_data.get("Level of rounding used in financial results", "Crores")
-            tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
-            other_tables = soup.find_all("table", class_="customTablewidth3Col")
-            table = None
-            if tables and len(tables) > 1:
-                for table1 in tables[:1]:
-                    table = table1
-            elif other_tables:
-                for table1 in other_tables[:1]:
-                    table = table1
+
+            if "GI" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                # print(tables)
+                table = None
+                total_rows = []
+                if tables and len(tables) > 1:
+                    for table1 in tables[:4]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
+                # print(total_rows)
+                # print(len(total_rows))
+                final_data = await fetch_th_tr_from_gi_table(total_rows)
+                # print(final_data, "---------------------f---------------------------")
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value
             else:
-                tables = soup.find_all("table")
-                for table1 in tables[1:2]:
-                    table = table1
-            rows = [
-                tr for tr in table.find_all("tr")
-                if tr.get_text(strip=True)
-            ]
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                other_tables = soup.find_all("table", class_="customTablewidth3Col")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                elif other_tables:
+                    for table1 in other_tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
 
-            final_data = await fetch_th_tr_from_table(rows)
-
-            structured = await safe_build(final_data)
-            structured_with_values = await inject_values_into_hierarchy(
-                structured,
-                final_data
-            )
-            return structured_with_values, value
+                final_data = await fetch_th_tr_from_table(rows)
+                print(final_data, "---------------------f---------------------------")
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value
 
         return structured_with_values, None
     except Exception as e:
@@ -664,15 +879,20 @@ async def build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
     value = item.get("value")
     children = item.get("child", [])
-
+    print(value, heading, "build_node")
     # convert lakhs → crores
     if amount_type == "Lakhs":
         if isinstance(value, (int, float)):
-            value = round(value / 100, 2)
+            # value = round(value / 100, 2)
+            if value.is_integer() and value not in [1,2,3,4,5,6,7,8,9,10]:
+                value = round(value / 100, 2)
     elif amount_type == "Crores":
         if isinstance(value, (int, float)):
-            value = round(value / 1_00_00_000, 2)
-
+            print(value, heading, "build_node_crcr")
+            # value = round(value / 1_00_00_000, 2)
+            if value.is_integer() and value not in [1,2,3,4,5,6,7,8,9,10]:
+                value = round(value / 1_00_00_000, 2)
+    print(value, heading, "heading")
 
     if heading not in node_map:
         node_map[heading] = {

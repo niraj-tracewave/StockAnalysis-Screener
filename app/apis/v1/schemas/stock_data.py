@@ -12,3 +12,8 @@ class QuarterlyResultSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UpdateStockPriceSchema(BaseModel):
+    price: float
+    scrip: Optional[str] = None
+    symbol: Optional[str] = None

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from starlette import status
 
 from app.apis.deps import get_db, get_external_db
-from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema
+from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, UpdateStockPriceSchema
 from app.apis.v1.services.stock_data import CompanyStockFetchService
 from app.core.security import optional_get_current_user
 
@@ -77,3 +77,9 @@ async def search_company(symbol: str, days: str,
                           db: Session = Depends(get_db),
                           ):
     return await CompanyStockFetchService.fetch_listed_company_chart_data(symbol, days, scrip, db)
+
+@router.put("/update-stock-price/{symbol}/", status_code=status.HTTP_200_OK)
+async def search_company(request: UpdateStockPriceSchema,
+                          db: Session = Depends(get_db),
+                          ):
+    return await CompanyStockFetchService.update_stock_price(request, db)
