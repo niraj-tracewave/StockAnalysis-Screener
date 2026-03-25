@@ -965,6 +965,7 @@ async def update_nse_bse_stock_information_async():
             low_price = company.details.low_price
             pe_ratio = company.details.pe_ratio
             face_value = company.details.face_value
+            market_cap_cr = company.details.market_cap
             nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
             bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
             if nse_company_list and bse_company_list:
@@ -983,6 +984,11 @@ async def update_nse_bse_stock_information_async():
                 low_price = nse_metadata.get('dayLow')
                 pe_ratio = sec_info.get('pdSymbolPe')
                 roe = header_data.get('ROE')
+                total_market_cap = trade_info.get('totalMarketCap')
+                if total_market_cap:
+                    market_cap_cr = round(total_market_cap / 1e7, 2)
+                else:
+                    market_cap_cr = None
             elif nse_company_list:
                 nse_data = await main(company.nse_symbol)
                 symbol_data = nse_data.get('symbolData')
@@ -995,6 +1001,11 @@ async def update_nse_bse_stock_information_async():
                 high_price = nse_metadata.get('dayHigh')
                 low_price = nse_metadata.get('dayLow')
                 pe_ratio = sec_info.get('pdSymbolPe')
+                total_market_cap = trade_info.get('totalMarketCap')
+                if total_market_cap:
+                    market_cap_cr = round(total_market_cap / 1e7, 2)
+                else:
+                    market_cap_cr = None
             elif bse_company_list:
                 security_code = bse_company_list[0].get("bse_code")
                 bse_data = await main_bse(security_code)
@@ -1012,12 +1023,17 @@ async def update_nse_bse_stock_information_async():
                 low_price = header.get('Low')
                 pe_ratio = header_data.get('PE')
                 roe = header_data.get('ROE')
+                stock_trading = bse_data.get('stockTrading')
+                total_market_cap = stock_trading.get('MktCapFull', None)
+                if total_market_cap:
+                    market_cap_cr = float(total_market_cap)
             company.details.roe = float(roe) if roe and roe != '-' else None
             company.details.current_price = current_price
             company.details.high_price = high_price
             company.details.low_price = low_price
             company.details.pe_ratio = float(pe_ratio) if pe_ratio and pe_ratio != '-' else None
             company.details.face_value = face_value
+            company.details.market_cap = market_cap_cr
             db.commit()
             new_process_symbol.append(company.nse_symbol)
 
