@@ -951,9 +951,10 @@ PARENT_CHILD_MAP_GI = {
         "Premium Earned (Net)",
         "Income from investments (net)",
         "Other income",
-        "Other income -Foreign exchange Gain/( Loss)",
+        "Other income Foreign exchange Gain/Loss",
         "Total other income",
-        "Total income"
+        "Total income",
+        "Other income -Foreign exchange Gain/( Loss)"
     ],
 
     "Operating expenses": [

@@ -694,7 +694,6 @@ async def fetch_th_tr_from_gi_table(rows_data):
             "heading": None,
             "value": None,
         }
-        # print(ths, tds)
         if tds:
             if len(tds) == 3:
                 section_name = await extract_text(tds[1]) if len(tds) > 1 else None
@@ -703,29 +702,29 @@ async def fetch_th_tr_from_gi_table(rows_data):
                 # value = await parse_numeric(text)
 
             elif len(tds) == 4:
-                print(ths, tds)
+                # print(ths, tds)
                 section_name = await extract_text(tds[1]) if len(tds) == 4 else None
-                print(section_name)
+                print(section_name, "----section-name-----")
                 f_json['heading'] = section_name
                 text = tds[2].get_text(strip=True) if len(tds) == 4 else None
                 value = await parse_numeric(text)
                 print(value)
                 print("---------------------------------------------------2222222")
                 f_json['value'] = value
-        else:
-            # print(section_name, "----heading-----")
-            # print(ths, tds)
-            section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
-            # print(section_name)
-            f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
-            text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+            elif len(tds) == 2 and len(ths) == 1:
+                # print(section_name, "----heading-----")
+                # print(ths, tds, "---oooppppp")
+                section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                # print(section_name)
+                f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                text = tds[0].get_text(strip=True) if len(tds) == 2 else None
 
-            value = await parse_numeric(text)
-            # print(value)
-            # print("---------------------------------------------------111111111")
-            f_json['value'] = value
+                value = await parse_numeric(text)
+                # print(value)
+                # print("---------------------------------------------------111111111")
+                f_json['value'] = value
 
-        final_data.append(f_json)
+            final_data.append(f_json)
     print(final_data, "----fffff")
     return final_data
 
