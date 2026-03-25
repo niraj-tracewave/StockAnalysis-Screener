@@ -963,6 +963,7 @@ PARENT_CHILD_MAP_GI = {
         "Operating Expenses related to insurance business",
         "Employees remuneration and welfare expenses",
         "Other operating expenses",
+        "Other operating expenses",
         "Total other operating expenses",
         "Total operating expenses related to insurance business",
         "Premium Deficiency",
@@ -983,6 +984,7 @@ PARENT_CHILD_MAP_GI = {
     "Income in shareholder's account": [
         "Transfer from Policyholders' Fund",
         "Income from investments",
+        "Other income",
         "Other income",
         "Share of Profit in Associates Companies",
         "Total other income",

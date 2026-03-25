@@ -2,6 +2,7 @@ import calendar
 import os
 import re
 import unicodedata
+from collections import defaultdict, deque
 
 import aiohttp
 import pandas as pd
@@ -346,6 +347,278 @@ async def inject_values_into_hierarchy(structure, values_json):
 
     await traverse(structure)
     return structure
+#
+# async def gi_inject_values_into_hierarchy(structure, values_json):
+#
+#     value_lookup = defaultdict(list)
+#
+#     # Step 1: build lookup with heading ONLY (raw source)
+#     for item in values_json:
+#         if item.get("value") is not None:
+#             key = await normalize(item["heading"])
+#             value_lookup[key].append(item["value"])
+#
+#     # Step 2: traverse with index tracking
+#     used_index = defaultdict(int)
+#
+#     async def traverse(nodes):
+#         for node in nodes:
+#             key = await normalize(node["heading"])
+#
+#             if key in value_lookup:
+#                 idx = used_index[key]
+#
+#                 if idx < len(value_lookup[key]):
+#                     node["value"] = value_lookup[key][idx]
+#                     used_index[key] += 1   # move pointer
+#
+#             await traverse(node["child"])
+#
+#     await traverse(structure)
+#     return structure
+
+
+async def gi_inject_values_into_hierarchy(structure, values_json):
+
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item["value"])
+
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    async def traverse(nodes, parent=None):
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+            parent_key = await normalize(parent) if parent else None
+
+            # ✅ STRICT: only assign if mapping matches
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+                    if value_lookup[child_key]:
+                        node["value"] = value_lookup[child_key].popleft()
+
+            await traverse(node["child"], node["heading"])
+
+    await traverse(structure)
+    return structure
+
+# async def gi_build_hierarchy(flat_data, parent_child_map):
+#     import json
+#     from collections import defaultdict
+#
+#     if isinstance(flat_data, str):
+#         flat_data = json.loads(flat_data)
+#
+#     # -------------------------
+#     # STEP 1 — create parent containers
+#     # -------------------------
+#     parent_nodes = {}
+#     for parent in parent_child_map.keys():
+#         p_key = await normalize(parent)
+#         parent_nodes[p_key] = {
+#             "heading": parent.title(),
+#             "value": None,
+#             "child": []
+#         }
+#
+#     # -------------------------
+#     # STEP 2 — build child → MULTIPLE parents lookup
+#     # -------------------------
+#     child_to_parents = defaultdict(list)
+#
+#     for parent, children in parent_child_map.items():
+#         p_key = await normalize(parent)
+#         for child in children:
+#             c_key = await normalize(child)
+#             child_to_parents[c_key].append(p_key)
+#
+#     # -------------------------
+#     # STEP 3 — insert nested parents
+#     # -------------------------
+#     for parent, children in parent_child_map.items():
+#         parent_key = await normalize(parent)
+#
+#         for child in children:
+#             child_key = await normalize(child)
+#
+#             if child_key == parent_key:
+#                 continue
+#
+#             if child_key in parent_nodes:
+#                 parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+#
+#     # -------------------------
+#     # STEP 4 — SECTION-AWARE parsing (🔥 MAIN FIX)
+#     # -------------------------
+#     current_section = None
+#
+#     for row in flat_data:
+#         if not isinstance(row, dict):
+#             continue
+#
+#         heading_raw = row.get("heading")
+#         if not heading_raw:
+#             continue
+#
+#         heading_raw = heading_raw.strip()
+#         heading = await normalize(heading_raw)
+#         value = row.get("value")
+#
+#         # ✅ detect section (parent)
+#         if heading in parent_nodes:
+#             current_section = heading
+#             continue
+#
+#         # skip if no active section
+#         if not current_section:
+#             continue
+#
+#         # skip parent rows with no value
+#         if heading in parent_nodes and value is None:
+#             continue
+#
+#         # ✅ ONLY attach to CURRENT SECTION (IMPORTANT FIX)
+#         if heading in child_to_parents:
+#             if current_section in child_to_parents[heading]:
+#
+#                 node = {
+#                     "heading": heading,
+#                     "value": value,
+#                     "child": []
+#                 }
+#
+#                 parent_nodes[current_section]["child"].append(node)
+#
+#     # -------------------------
+#     # STEP 5 — find root nodes
+#     # -------------------------
+#     all_children = set(child_to_parents.keys())
+#
+#     roots = []
+#     for parent in parent_child_map:
+#         p_key = await normalize(parent)
+#         if p_key not in all_children:
+#             roots.append(parent_nodes[p_key])
+#
+#     return roots
+
+async def gi_build_hierarchy(flat_data, parent_child_map):
+    import json
+    from collections import defaultdict
+
+    if isinstance(flat_data, str):
+        flat_data = json.loads(flat_data)
+
+    # -------------------------
+    # STEP 1 — create parent containers
+    # -------------------------
+    parent_nodes = {}
+    for parent in parent_child_map.keys():
+        p_key = await normalize(parent)
+        parent_nodes[p_key] = {
+            "heading": parent.title(),
+            "value": None,
+            "child": []
+        }
+
+    # -------------------------
+    # STEP 2 — build child → MULTIPLE parents lookup
+    # -------------------------
+    child_to_parents = defaultdict(list)
+
+    for parent, children in parent_child_map.items():
+        p_key = await normalize(parent)
+        for child in children:
+            c_key = await normalize(child)
+            child_to_parents[c_key].append(p_key)
+
+    # -------------------------
+    # STEP 3 — insert nested parents
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        parent_key = await normalize(parent)
+
+        for child in children:
+            child_key = await normalize(child)
+
+            if child_key == parent_key:
+                continue
+
+            if child_key in parent_nodes:
+                parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+
+    # -------------------------
+    # STEP 4 — AUTO-DETECT SECTIONS (🔥 KEY FIX)
+    # -------------------------
+    SECTION_KEYS = set()
+    for parent, children in parent_child_map.items():
+        if children:  # only parents with children are sections
+            SECTION_KEYS.add(await normalize(parent))
+
+    current_section = None
+
+    # -------------------------
+    # STEP 5 — PROCESS FLAT DATA
+    # -------------------------
+    for row in flat_data:
+        if not isinstance(row, dict):
+            continue
+
+        heading_raw = row.get("heading")
+        if not heading_raw:
+            continue
+
+        heading = await normalize(heading_raw.strip())
+        value = row.get("value")
+
+        # ✅ detect section dynamically
+        if heading in SECTION_KEYS:
+            current_section = heading
+            continue
+
+        # ✅ standalone parent nodes (profit, tax, etc.)
+        if heading in parent_nodes:
+            parent_nodes[heading]["value"] = value
+            continue
+
+        # skip if no active section
+        if not current_section:
+            continue
+
+        # skip empty values
+        # if value is None:
+        #     continue
+
+        # ✅ attach only to correct section
+        if heading in child_to_parents:
+            if current_section in child_to_parents[heading]:
+
+                node = {
+                    "heading": heading,
+                    "value": value,
+                    "child": []
+                }
+
+                parent_nodes[current_section]["child"].append(node)
+
+    # -------------------------
+    # STEP 6 — find root nodes
+    # -------------------------
+    all_children = set(child_to_parents.keys())
+
+    roots = []
+    for parent in parent_child_map:
+        p_key = await normalize(parent)
+        if p_key not in all_children:
+            roots.append(parent_nodes[p_key])
+
+    return roots
 
 async def build_hierarchy(flat_data, parent_child_map):
     import json
@@ -438,7 +711,7 @@ async def safe_build(data, file_url=None):
     if file_url and "NBFC_INDAS" in file_url:
         return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
     if file_url and "GI" in file_url:
-        return await build_hierarchy(data, PARENT_CHILD_MAP_GI)
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -700,6 +973,11 @@ async def fetch_th_tr_from_gi_table(rows_data):
                 f_json['heading'] = section_name
                 # text = tds[1].get_text(strip=True) if len(tds) > 1 else None
                 # value = await parse_numeric(text)
+            elif len(tds) == 1:
+                section_name = await extract_text(tds[0]) if len(tds) == 1 else None
+                f_json['heading'] = section_name
+                # text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                # value = await parse_numeric(text)
 
             elif len(tds) == 4:
                 # print(ths, tds)
@@ -725,7 +1003,6 @@ async def fetch_th_tr_from_gi_table(rows_data):
                 f_json['value'] = value
 
             final_data.append(f_json)
-    print(final_data, "----fffff")
     return final_data
 
 async def fetch_bse_th_tr_from_table(rows_data):
@@ -831,12 +1108,19 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                             if tr.get_text(strip=True)
                         ]
                         total_rows.extend(rows)
-                # print(total_rows)
-                # print(len(total_rows))
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[:5]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
                 final_data = await fetch_th_tr_from_gi_table(total_rows)
-                # print(final_data, "---------------------f---------------------------")
+                print(final_data, "---------------------f---------------------------")
                 structured = await safe_build(final_data, url)
-                structured_with_values = await inject_values_into_hierarchy(
+                structured_with_values = await gi_inject_values_into_hierarchy(
                     structured,
                     final_data
                 )
