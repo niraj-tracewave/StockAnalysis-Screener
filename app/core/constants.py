@@ -1007,10 +1007,12 @@ PARENT_CHILD_MAP_GI = {
         "Interim Dividend",
         "Final dividend"
     ],
-    "Opening Balance and Appropriations from PAT (Net)": [],
+    "Opening Balance and Appropriations from Pat (Net)": [],
+    "Opening Balance and Approproations from PAT (Net)": [],
     "Profit (loss) carried to balance sheet": [],
     "Paid up equity capital": [],
     "Reserve and Surplus (Excluding Revaluation Reserve)": [],
+    "Reserve and Surplus (Excluding Revualuation Reserve)": [],
     "Fair value change account and revaluation reserve": [],
     "Assets": [
         "Investments",
@@ -1018,6 +1020,7 @@ PARENT_CHILD_MAP_GI = {
         "Policyholders' Fund",
         "Total investments",
         "Other Assets (Net of current liabilities and provisions)",
+        "Other Assets (Net of current liabilites and provisions)",
         "Total assets"
     ],
 
