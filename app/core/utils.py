@@ -554,14 +554,17 @@ async def gi_build_hierarchy(flat_data, parent_child_map):
                 parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
 
     # -------------------------
-    # STEP 4 — AUTO-DETECT SECTIONS (🔥 KEY FIX)
+    # STEP 4 — AUTO-DETECT SECTIONS
     # -------------------------
     SECTION_KEYS = set()
     for parent, children in parent_child_map.items():
-        if children:  # only parents with children are sections
+        if children:
             SECTION_KEYS.add(await normalize(parent))
 
     current_section = None
+
+    # 🔥 track inserted children per section
+    section_child_tracker = defaultdict(set)
 
     # -------------------------
     # STEP 5 — PROCESS FLAT DATA
@@ -577,25 +580,20 @@ async def gi_build_hierarchy(flat_data, parent_child_map):
         heading = await normalize(heading_raw.strip())
         value = row.get("value")
 
-        # ✅ detect section dynamically
+        # detect section
         if heading in SECTION_KEYS:
             current_section = heading
             continue
 
-        # ✅ standalone parent nodes (profit, tax, etc.)
+        # standalone parent
         if heading in parent_nodes:
             parent_nodes[heading]["value"] = value
             continue
 
-        # skip if no active section
         if not current_section:
             continue
 
-        # skip empty values
-        # if value is None:
-        #     continue
-
-        # ✅ attach only to correct section
+        # attach valid child
         if heading in child_to_parents:
             if current_section in child_to_parents[heading]:
 
@@ -607,8 +605,32 @@ async def gi_build_hierarchy(flat_data, parent_child_map):
 
                 parent_nodes[current_section]["child"].append(node)
 
+                # track this child
+                section_child_tracker[current_section].add(heading)
+
     # -------------------------
-    # STEP 6 — find root nodes
+    # STEP 6 — ADD MISSING CHILDREN (🔥 MAIN FIX)
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        p_key = await normalize(parent)
+
+        for child in children:
+            c_key = await normalize(child)
+
+            # skip nested parent case
+            if c_key in parent_nodes:
+                continue
+
+            # if not already added → add with None
+            if c_key not in section_child_tracker[p_key]:
+                parent_nodes[p_key]["child"].append({
+                    "heading": c_key,
+                    "value": None,
+                    "child": []
+                })
+
+    # -------------------------
+    # STEP 7 — find root nodes
     # -------------------------
     all_children = set(child_to_parents.keys())
 
@@ -982,12 +1004,12 @@ async def fetch_th_tr_from_gi_table(rows_data):
             elif len(tds) == 4:
                 # print(ths, tds)
                 section_name = await extract_text(tds[1]) if len(tds) == 4 else None
-                print(section_name, "----section-name-----")
+                # print(section_name, "----section-name-----")
                 f_json['heading'] = section_name
                 text = tds[2].get_text(strip=True) if len(tds) == 4 else None
                 value = await parse_numeric(text)
-                print(value)
-                print("---------------------------------------------------2222222")
+                # print(value)
+                # print("---------------------------------------------------2222222")
                 f_json['value'] = value
             elif len(tds) == 2 and len(ths) == 1:
                 # print(section_name, "----heading-----")
@@ -1118,7 +1140,7 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                         ]
                         total_rows.extend(rows)
                 final_data = await fetch_th_tr_from_gi_table(total_rows)
-                print(final_data, "---------------------f---------------------------")
+                # print(final_data, "---------------------f---------------------------")
                 structured = await safe_build(final_data, url)
                 structured_with_values = await gi_inject_values_into_hierarchy(
                     structured,
@@ -1162,7 +1184,6 @@ async def build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
     value = item.get("value")
     children = item.get("child", [])
-    print(value, heading, "build_node")
     # convert lakhs → crores
     if amount_type == "Lakhs":
         if isinstance(value, (int, float)):
@@ -1171,11 +1192,9 @@ async def build_node(item, node_map, quarter_index, amount_type):
                 value = round(value / 100, 2)
     elif amount_type == "Crores":
         if isinstance(value, (int, float)):
-            print(value, heading, "build_node_crcr")
             # value = round(value / 1_00_00_000, 2)
             if value.is_integer() and value not in [1,2,3,4,5,6,7,8,9,10]:
-                value = round(value / 1_00_00_000, 2)
-    print(value, heading, "heading")
+                value = value / 1_00_00_000
 
     if heading not in node_map:
         node_map[heading] = {

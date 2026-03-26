@@ -780,7 +780,7 @@ async def fetch_stock_quarterly_result_data_async():
                             quarterly_result = []
                             if integrated_filing_financials_list:
                                 response_list = []
-                                for integrated_filing_obj in integrated_filing_financials_list.get("data")[:1]:
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
                                     qe_date = integrated_filing_obj.get("qe_Date")
                                     consolidated = integrated_filing_obj.get("consolidated")
                                     ixbrl = integrated_filing_obj.get("ixbrl")
