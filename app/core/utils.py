@@ -13,7 +13,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
-from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI
+from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI
 
 settings = get_settings()
 
@@ -408,6 +408,70 @@ async def gi_inject_values_into_hierarchy(structure, values_json):
     await traverse(structure)
     return structure
 
+
+async def li_inject_values_into_hierarchy(structure, values_json):
+
+    # -------------------------
+    # STEP 1 — build lookup (heading → queue of values)
+    # -------------------------
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item.get("value"))
+
+    # -------------------------
+    # STEP 2 — normalize parent-child map
+    # -------------------------
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    # -------------------------
+    # STEP 3 — track index per (parent, child)
+    # -------------------------
+    usage_counter = defaultdict(int)
+
+    # -------------------------
+    # STEP 4 — recursive traversal
+    # -------------------------
+    async def traverse(nodes, parent=None):
+        parent_key = await normalize(parent) if parent else None
+
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+
+            # unique key for duplicate tracking
+            unique_key = (parent_key, child_key)
+
+            # ✅ STRICT mapping check
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+
+                    if value_lookup[child_key]:
+                        index = usage_counter[unique_key]
+
+                        # assign sequential value safely
+                        try:
+                            node["value"] = value_lookup[child_key][index]
+                        except IndexError:
+                            node["value"] = None
+
+                        usage_counter[unique_key] += 1
+
+            # 🔁 recurse
+            if node.get("child"):
+                await traverse(node["child"], node["heading"])
+
+    # -------------------------
+    # STEP 5 — run traversal
+    # -------------------------
+    await traverse(structure)
+
+    return structure
+
 # async def gi_build_hierarchy(flat_data, parent_child_map):
 #     import json
 #     from collections import defaultdict
@@ -734,6 +798,8 @@ async def safe_build(data, file_url=None):
         return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
     if file_url and "GI" in file_url:
         return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
+    if file_url and "LI" in file_url:
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_LI)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -907,15 +973,12 @@ async def fetch_th_tr_from_table(rows_data):
         if ths:
             if len(ths) > 1:
                 th = ths[1]
-                print(th, "---------------th------------------")
                 for td in th.find_all("td"):
                     td.extract()
-                print(th, "------ttt-----")
                 section_name = th.get_text(strip=True)
             else:
                 section_name = None
             # section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
-            print(section_name)
             f_json['heading'] = section_name
             if tds:
                 if len(tds) == 3:
@@ -924,36 +987,23 @@ async def fetch_th_tr_from_table(rows_data):
                     text = tds[1].get_text(strip=True) if len(tds) > 1 else None
                     value = await parse_numeric(text)
                 elif len(tds) == 2 and len(ths) == 2:
-                    # print(ths, tds)
                     section_name = await extract_text(ths[1]) if len(ths) == 2 else None
-                    # print(section_name)
                     f_json['heading'] = section_name
                     text = tds[0].get_text(strip=True) if len(tds) == 2 else None
                     value = await parse_numeric(text)
-                    # print(value)
-                    # print("---------------------------------------------------2222222")
                 elif len(tds) == 2 and len(ths) == 1:
-                    print(ths, tds)
                     section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
-                    print(section_name)
                     f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
                     text = tds[0].get_text(strip=True) if len(tds) == 2 else None
 
                     value = await parse_numeric(text)
-                    print(value)
-                    print("---------------------------------------------------111111111")
 
                 else:
-                    # print(ths, tds)
-                    # print("---------------------------------------------------")
                     text = await extract_text(tds[0]) if len(tds) > 1 else None
                     value = await parse_numeric(text)
                 f_json['value'] = value
             else:
-                # print(section_name, "----heading-----")
-                print(ths)
                 j_value = await parse_row_dynamic(ths)
-                print(j_value, "-------j_value___")
                 if j_value:
                     j_heading = j_value.get("heading")
                     if j_heading:
@@ -963,9 +1013,6 @@ async def fetch_th_tr_from_table(rows_data):
 
                             data = [x for x in result if x not in remove_vals]
                             heading = " ".join(data)
-                        # value = await parse_numeric(j_value.get("current_value"))
-                        # # print(value)
-                        # # print("--------------------------------------")
                         if heading:
                             f_json['heading'] = heading
                     value = await parse_numeric(j_value.get("current_value"))
@@ -993,38 +1040,79 @@ async def fetch_th_tr_from_gi_table(rows_data):
             if len(tds) == 3:
                 section_name = await extract_text(tds[1]) if len(tds) > 1 else None
                 f_json['heading'] = section_name
-                # text = tds[1].get_text(strip=True) if len(tds) > 1 else None
-                # value = await parse_numeric(text)
             elif len(tds) == 1:
                 section_name = await extract_text(tds[0]) if len(tds) == 1 else None
                 f_json['heading'] = section_name
-                # text = tds[1].get_text(strip=True) if len(tds) > 1 else None
-                # value = await parse_numeric(text)
 
             elif len(tds) == 4:
-                # print(ths, tds)
                 section_name = await extract_text(tds[1]) if len(tds) == 4 else None
-                # print(section_name, "----section-name-----")
                 f_json['heading'] = section_name
                 text = tds[2].get_text(strip=True) if len(tds) == 4 else None
                 value = await parse_numeric(text)
-                # print(value)
-                # print("---------------------------------------------------2222222")
                 f_json['value'] = value
             elif len(tds) == 2 and len(ths) == 1:
-                # print(section_name, "----heading-----")
-                # print(ths, tds, "---oooppppp")
                 section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
-                # print(section_name)
                 f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
                 text = tds[0].get_text(strip=True) if len(tds) == 2 else None
 
                 value = await parse_numeric(text)
-                # print(value)
-                # print("---------------------------------------------------111111111")
                 f_json['value'] = value
 
             final_data.append(f_json)
+    return final_data
+
+async def fetch_th_tr_from_li_table(rows_data):
+    final_data = []
+    previous_raw = None
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        titles = {"Gross NPAs" : "Shareholders Gross NPAs",
+                  "Net NPAs": "Shareholders Net NPAs",
+                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+                  "Without unrealised gains":  "Shareholders Without unrealised gains",
+                  "With unrealised gains": "Shareholders With unrealised gains",}
+        if tds:
+            if len(ths) == 2 and len(tds) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                text = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+            elif len(ths) == 1 and len(tds) == 3:
+                section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+                text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+            elif len(ths) == 2 and len(tds) == 1:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+        else:
+            if len(ths) == 3:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+            elif len(ths) == 4:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+            elif len(ths) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+            elif len(ths) == 1:
+                section_name = await extract_text(ths[0]) if len(ths) > 0 else None
+                f_json['heading'] = section_name
+
+        final_data.append(f_json)
     return final_data
 
 async def fetch_bse_th_tr_from_table(rows_data):
@@ -1147,6 +1235,23 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     final_data
                 )
                 return structured_with_values, value
+            elif "LI" in url:
+                total_rows = []
+                tables = soup.find_all("table")
+                for table1 in tables[3:5]:
+                    table = table1
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    total_rows.extend(rows)
+                final_data = await fetch_th_tr_from_li_table(total_rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await li_inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value
             else:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
                 other_tables = soup.find_all("table", class_="customTablewidth3Col")
@@ -1167,7 +1272,6 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                 ]
 
                 final_data = await fetch_th_tr_from_table(rows)
-                print(final_data, "---------------------f---------------------------")
                 structured = await safe_build(final_data, url)
                 structured_with_values = await inject_values_into_hierarchy(
                     structured,
@@ -1282,6 +1386,74 @@ async def convert_to_quarterly_format(response_list):
     return {
         "headers": headers,
         "rows": rows
+    }
+
+async def li_build_node(item, quarter_index):
+    node = {
+        "key": await normalize(item["heading"]),
+        "label": item["heading"],
+        "values": [None] * (quarter_index + 1),
+        "type": "group" if item.get("child") else "single"
+    }
+
+    # set value
+    if item.get("value") is not None:
+        node["values"][quarter_index] = item["value"]
+
+    if item.get("child"):
+        node["children"] = [
+            await li_build_node(child, quarter_index)
+            for child in item["child"]
+        ]
+
+    return node
+
+
+async def li_inject_into_existing(existing_node, new_node, quarter_index):
+
+    # expand values list
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    # assign value
+    if new_node.get("value") is not None:
+        existing_node["values"][quarter_index] = new_node["value"]
+
+    # handle children (IMPORTANT: index-based, not key-based)
+    if "children" in existing_node and new_node.get("child"):
+
+        for i, child in enumerate(new_node["child"]):
+
+            if i < len(existing_node["children"]):
+                await li_inject_into_existing(
+                    existing_node["children"][i],
+                    child,
+                    quarter_index
+                )
+
+async def li_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            # first quarter → build structure
+            if quarter_index == 0:
+                node = await build_node(item, quarter_index)
+                root_nodes.append(node)
+
+            # next quarters → inject values
+            else:
+                await li_inject_into_existing(root_nodes[i], item, quarter_index)
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
     }
 
 async def bse_convert_to_quarterly_format(response_list):

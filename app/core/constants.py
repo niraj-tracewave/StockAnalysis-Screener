@@ -1065,3 +1065,233 @@ PARENT_CHILD_MAP_GI = {
         "No of investor complaints remaining unresolved at the end of the period"
     ]
 }
+
+# PARENT_CHILD_MAP_LI = {
+#     "Policyholders' Accounts": [
+#         "Income",
+#         "Gross premium income",
+#         "First Year Premium",
+#         "Renewal Premium",
+#         "Single Premium",
+#         "Gross premium income",
+#         "Net premium income",
+#         "Income from investments (Net)",
+#         "Other income",
+#         "Total other income",
+#         "Transfer Of Funds From Shareholders Account",
+#         "Total Income"
+#     ],
+#
+#     "Other income": [
+#         "Other income",
+#         "Share of profit of associates",
+#         "Minority Interest",
+#     ],
+#
+#     "Expenses": [
+#         "Commission on",
+#         "First Year Premium",
+#         "Renewal Premium",
+#         "Single Premium",
+#         "Total Commission",
+#         "Net Commission",
+#         "Operating Expenses related to insurance business",
+#         "Other operating expenses",
+#         "Total other operating expenses",
+#         "Total operating expenses related to insurance business",
+#         "Total Expenses of Management",
+#         "Provisions for doubtful debts (including bad debts written off)",
+#         "Provisions for diminution in value of investments",
+#         "Goods & Service tax charge on linked charges",
+#         "Provision for taxes",
+#         "Benefits Paid (Net)",
+#         "Change in actuarial liability",
+#         "Total Expenses",
+#     ],
+#
+#     "Operating Expenses related to insurance business": [
+#         "Employees remuneration and welfare expenses",
+#         "Administration expenses",
+#         "Advertisement and publicity"
+#     ],
+#
+#     "Other operating expenses": [
+#         "Rent Rates and Taxes",
+#         "Repairs",
+#         "Auditors' fees",
+#         "Interest & Bank Charges",
+#         "Expenses on Investment Property",
+#         "Electricity Charges",
+#         "Depreciation"
+#     ],
+#
+#     "Provision for taxes": [
+#         "Current Tax",
+#         "Deffered Tax",
+#         "Total provision of taxes"
+#     ],
+#     "Net Surplus(Deficit)": [],
+#     "Appropriations": [
+#         "Transferred to Shareholders A/c"
+#         "Funds for Future Appropriation"
+#     ],
+#
+#     "Details of Surplus / Deficit": [
+#         "Interim bonus paid",
+#         "Allocation of bonus to policyholders",
+#         "Surplus shown in the Revenue Account",
+#         "Terminal bonus paid",
+#         "Total Surplus (Deficit)"
+#     ]
+#
+# }
+
+PARENT_CHILD_MAP_LI = {
+    # "Income": [
+    #     "Transfer from Poliycholders' Account",
+    #     "Income under Shareholders' Account",
+    #     "Investment Income",
+    #     "Other income",
+    #     "Other Income",
+    #     "Total Other income",
+    #     "Total income under shareholders account",
+    #     "Total Income"
+    # ],
+    #
+    # "Expenses": [
+    #     "Expenses other than those related to insurance business",
+    #     "Transfer of funds to policyholders account",
+    #     "Provisions for doubtful debts (including write off)",
+    #     "Provisions for diminution in value of investments",
+    #     "Total Expenses",
+    #     "Profit/ (loss) before tax",
+    #     "Provisions for tax",
+    #     "Current tax",
+    #     "Deffered tax",
+    #     "Profit / (loss) after tax and before Extraordinary Items",
+    #     "Extraordinary Items (Net of tax expenses)",
+    #     "Profit/ (loss) after tax and Extraordinary Items",
+    #     "Dividend per share",
+    #     "Interim Dividend",
+    #     "Final Dividend",
+    #     "Profit/(Loss) carried to Balance Sheet",
+    #     "Paid up equity share capital",
+    #     "Reserve & Surplus (excluding Revaluation Reserve)",
+    #     "Fair Value Change Account and Revaluation Reserve (Shareholders)",
+    #     "Assets"
+    # ],
+
+    # "Assets": [
+    #     "Investments:",
+    #     "Shareholders",
+    #     "Policyholders Fund excluding Linked Assets",
+    #     "Assets held to cover Linked Liabilities",
+    #     "Total Investments",
+    #     "Other Assets (Net of current liabilities and provisions)",
+    #     "Total Assets"
+    # ],
+    "Analytical Ratios":[
+        "Solvency Ratio",
+        "Expenses of Management Ratio",
+        "Policyholder 's liabilities to shareholders' fund",
+        "Earnings per share (Rs.):",
+        "NPA ratios: (for policyholders' fund)"
+    ],
+    "Earnings per share (Rs.):": [
+        "Basic and diluted EPS before extraordinary items (net of tax expense) for the period (not to be annualized)",
+        "Basic and diluted EPS after extraordinary items (net of tax expense) for the period (not to be annualized)"
+    ],
+    "NPA ratios: (for policyholders' fund)":[
+        "Gross NPAs",
+        "Net NPAs",
+        "% of Gross NPAs",
+        "% of Net NPAs"
+    ],
+
+    "Gross NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "Net NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "% of Gross NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "% of Net NPAs": [
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+
+    "Yield on Investments (on policyholders' fund)":[
+        "Without unrealised gains",
+        "With unrealised gains"
+    ],
+
+    "Without unrealised gains": [
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "With unrealised gains": [
+        "Non Linked",
+        "Par",
+        "Non Par"
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    # "NPA ratios: (for shareholders' fund)":[
+    #     "Shareholders Gross NPAs",
+    #     "Shareholders Net NPAs",
+    #     "Shareholders Percentage of Gross NPAs",
+    #     "Shareholders Percentage of Net NPAs"
+    # ],
+    #
+    # "Yield on Investments (on shareholders' fund)":[
+    #     "Shareholders Without unrealised gains",
+    #     "Shareholders With unrealised gains"
+    # ],
+    #
+    # "Persistency Ratio": [
+    #     "13th Month",
+    #     "25th Month",
+    #     "37th Month",
+    #     "49th Month",
+    #     "61st Month"
+    # ],
+    #
+    # "Other Rations":[
+    #     "Conservation Ratio",
+    #     "Percentage of shares held by Government of India (in case of public sector insurance companies)"
+    # ],
+
+    # "Investor Compliants":[
+    #     "No of investor complaints pending at the beginning of the period",
+    #     "No of investor complaints during the period",
+    #     "No of investor complaints disposed off during the period",
+    #     "No of investor complaints remaining unresolved at the end of the period"
+    # ]
+
+}
