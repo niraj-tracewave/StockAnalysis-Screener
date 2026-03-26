@@ -3,10 +3,15 @@ from sqlalchemy.orm import Session
 from starlette import status
 
 from app.apis.deps import get_db
-from app.apis.v1.services.follow_unfollow_company import SearchCompanySchema, FollowUnfollowCompanyService
+from app.apis.v1.services.follow_unfollow_company import SearchCompanySchema, FollowUnfollowCompanyService, \
+    FetchStockScripCodeService
 
 router = APIRouter()
 
 @router.post("/search-company", status_code=status.HTTP_200_OK)
 async def search_company(request: SearchCompanySchema, db: Session = Depends(get_db)):
     return await FollowUnfollowCompanyService.company_search(request, db)
+
+@router.get("/search-stock-scrip-code", status_code=status.HTTP_200_OK)
+async def search_company(search: str, db: Session = Depends(get_db)):
+    return await FetchStockScripCodeService.stock_search(search, db)
