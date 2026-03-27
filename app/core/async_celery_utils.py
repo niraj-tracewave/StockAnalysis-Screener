@@ -18,7 +18,7 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     save_quarterly_result_processed_symbol, parse_financial_name, fetch_bse_integrated_filing_financials_data_from, \
     bse_convert_to_quarterly_format, update_nse_bse_scrip_code_load_processed_symbols, \
     update_nse_bse_scrip_code_save_processed_symbol, update_nse_bse_price_data_load_processed_symbols, \
-    update_nse_bse_price_data_save_processed_symbol
+    update_nse_bse_price_data_save_processed_symbol, decide_quarterly_format
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -780,7 +780,7 @@ async def fetch_stock_quarterly_result_data_async():
                             quarterly_result = []
                             if integrated_filing_financials_list:
                                 response_list = []
-                                for integrated_filing_obj in integrated_filing_financials_list.get("data")[1:2]:
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
                                     qe_date = integrated_filing_obj.get("qe_Date")
                                     consolidated = integrated_filing_obj.get("consolidated")
                                     ixbrl = integrated_filing_obj.get("ixbrl")
@@ -788,15 +788,16 @@ async def fetch_stock_quarterly_result_data_async():
                                     if qe_date:
                                         formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
                                     if consolidated == "Consolidated":
-                                        output, amount_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
                                         output.append({
                                             "date": formatted or qe_date,
                                             "consolidated": consolidated,
-                                            "amount_type": amount_type
+                                            "amount_type": amount_type,
+                                            "format": format_type,
                                         })
                                         response_list.append(output)
                                 if response_list:
-                                    quarterly_result = await convert_to_quarterly_format(response_list)
+                                    quarterly_result = await decide_quarterly_format(response_list)
                             if quarterly_result:
                                 company_stock = QuarterlyResultDateset(
                                     company_id=company.id,
@@ -852,15 +853,16 @@ async def fetch_stock_quarterly_result_data_async():
                                     if qe_date:
                                         formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
                                     if consolidated == "Consolidated":
-                                        output, amount_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
                                         output.append({
                                             "date": formatted or qe_date,
                                             "consolidated": consolidated,
-                                            "amount_type": amount_type
+                                            "amount_type": amount_type,
+                                            "format": format_type
                                         })
                                         response_list.append(output)
                                 if response_list:
-                                    quarterly_result = await convert_to_quarterly_format(response_list)
+                                    quarterly_result = await decide_quarterly_format(response_list)
                             if quarterly_result:
                                 company_stock = QuarterlyResultDateset(
                                     company_id=company.id,

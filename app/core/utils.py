@@ -13,7 +13,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
-from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI
+from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI, \
+    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING
 
 settings = get_settings()
 
@@ -796,10 +797,14 @@ async def safe_build(data, file_url=None):
 
     if file_url and "NBFC_INDAS" in file_url:
         return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
-    if file_url and "GI" in file_url:
+    if file_url and "_GI_" in file_url:
         return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
-    if file_url and "LI" in file_url:
+    if file_url and "_LI_" in file_url:
         return await gi_build_hierarchy(data, PARENT_CHILD_MAP_LI)
+    if file_url and "_INDAS_" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_INDAS)
+    if file_url and "_BANKING_" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_BANKING)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -1081,36 +1086,68 @@ async def fetch_th_tr_from_li_table(rows_data):
                   "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
                   "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
                   "Without unrealised gains":  "Shareholders Without unrealised gains",
-                  "With unrealised gains": "Shareholders With unrealised gains",}
+                  "With unrealised gains": "Shareholders With unrealised gains"}
         if tds:
             if len(ths) == 2 and len(tds) == 2:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
+
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name) or section_name
                 text = tds[0].get_text(strip=True) if len(tds) > 1 else None
                 value = await parse_numeric(text)
                 f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
             elif len(ths) == 1 and len(tds) == 3:
                 section_name = await extract_text(tds[0]) if len(tds) > 1 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
                 text = tds[1].get_text(strip=True) if len(tds) > 1 else None
                 value = await parse_numeric(text)
                 f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
             elif len(ths) == 2 and len(tds) == 1:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
         else:
             if len(ths) == 3:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
             elif len(ths) == 4:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                text = ths[2].get_text(strip=True) if len(ths) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
             elif len(ths) == 2:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
             elif len(ths) == 1:
                 section_name = await extract_text(ths[0]) if len(ths) > 0 else None
                 f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
 
         final_data.append(f_json)
     return final_data
@@ -1205,7 +1242,7 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
             table_data = await extract_table_as_dict(soup, gITable)
             value = table_data.get("Level of rounding used in financial results", "Crores")
 
-            if "GI" in url:
+            if "_GI_" in url:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
                 # print(tables)
                 table = None
@@ -1228,14 +1265,13 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                         ]
                         total_rows.extend(rows)
                 final_data = await fetch_th_tr_from_gi_table(total_rows)
-                # print(final_data, "---------------------f---------------------------")
                 structured = await safe_build(final_data, url)
                 structured_with_values = await gi_inject_values_into_hierarchy(
                     structured,
                     final_data
                 )
-                return structured_with_values, value
-            elif "LI" in url:
+                return structured_with_values, value, "GI"
+            elif "_LI_" in url:
                 total_rows = []
                 tables = soup.find_all("table")
                 for table1 in tables[3:5]:
@@ -1251,7 +1287,51 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     structured,
                     final_data
                 )
-                return structured_with_values, value
+                return structured_with_values, value, "LI"
+            elif "_INDAS_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "INDAS"
+            elif "_BANKING_" in url:
+                other_tables = soup.find_all("table", class_="customTablewidth3Col")
+                table = None
+                if other_tables:
+                    for table1 in other_tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "BANKING"
             else:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
                 other_tables = soup.find_all("table", class_="customTablewidth3Col")
@@ -1277,11 +1357,11 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     structured,
                     final_data
                 )
-                return structured_with_values, value
+                return structured_with_values, value, "Other"
 
-        return structured_with_values, None
+        return structured_with_values, None, None
     except Exception as e:
-        return [], None
+        return [], None, None
 
 
 async def build_node(item, node_map, quarter_index, amount_type):
@@ -1388,7 +1468,20 @@ async def convert_to_quarterly_format(response_list):
         "rows": rows
     }
 
-async def li_build_node(item, quarter_index):
+async def li_build_node(item, quarter_index, amount_type):
+    value = item.get("value")
+    # -------------------------
+    # APPLY AMOUNT CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 100
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 1_00_00_000
+
     node = {
         "key": await normalize(item["heading"]),
         "label": item["heading"],
@@ -1398,26 +1491,41 @@ async def li_build_node(item, quarter_index):
 
     # set value
     if item.get("value") is not None:
-        node["values"][quarter_index] = item["value"]
+        node["values"][quarter_index] = value
 
     if item.get("child"):
         node["children"] = [
-            await li_build_node(child, quarter_index)
+            await li_build_node(child, quarter_index, amount_type)
             for child in item["child"]
         ]
 
     return node
 
 
-async def li_inject_into_existing(existing_node, new_node, quarter_index):
+async def li_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
 
     # expand values list
     while len(existing_node["values"]) <= quarter_index:
         existing_node["values"].append(None)
 
+    value = new_node.get("value")
+
+    # -------------------------
+    # APPLY SAME CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
     # assign value
-    if new_node.get("value") is not None:
-        existing_node["values"][quarter_index] = new_node["value"]
+    if value is not None:
+        existing_node["values"][quarter_index] = value
 
     # handle children (IMPORTANT: index-based, not key-based)
     if "children" in existing_node and new_node.get("child"):
@@ -1428,8 +1536,21 @@ async def li_inject_into_existing(existing_node, new_node, quarter_index):
                 await li_inject_into_existing(
                     existing_node["children"][i],
                     child,
-                    quarter_index
+                    quarter_index, amount_type
                 )
+async def get_format_type(response_list):
+    if not response_list or not response_list[0]:
+        return None  # or "other" if you prefer
+    return response_list[0][-1].get("format")
+
+async def decide_quarterly_format(response_list):
+    frmt = await get_format_type(response_list)
+    result = {}
+    if frmt in ["GI", "Other", "INDAS", "BANKING"]:
+        result = await convert_to_quarterly_format(response_list)
+    elif frmt in ["LI"]:
+        result = await li_convert_to_quarterly_format(response_list)
+    return result
 
 async def li_convert_to_quarterly_format(response_list):
     headers = []
@@ -1444,12 +1565,12 @@ async def li_convert_to_quarterly_format(response_list):
 
             # first quarter → build structure
             if quarter_index == 0:
-                node = await build_node(item, quarter_index)
+                node = await li_build_node(item, quarter_index, meta.get("amount_type"))
                 root_nodes.append(node)
 
             # next quarters → inject values
             else:
-                await li_inject_into_existing(root_nodes[i], item, quarter_index)
+                await li_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
 
     return {
         "headers": headers,
