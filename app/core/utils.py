@@ -1332,6 +1332,28 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     final_data
                 )
                 return structured_with_values, value, "BANKING"
+            elif "_NBFC_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "NBFC"
             else:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
                 other_tables = soup.find_all("table", class_="customTablewidth3Col")
@@ -1546,7 +1568,7 @@ async def get_format_type(response_list):
 async def decide_quarterly_format(response_list):
     frmt = await get_format_type(response_list)
     result = {}
-    if frmt in ["GI", "Other", "INDAS", "BANKING"]:
+    if frmt in ["GI", "Other", "INDAS", "BANKING", "NBFC"]:
         result = await convert_to_quarterly_format(response_list)
     elif frmt in ["LI"]:
         result = await li_convert_to_quarterly_format(response_list)
