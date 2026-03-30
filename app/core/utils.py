@@ -14,7 +14,8 @@ from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
 from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI, \
-    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING, PARENT_CHILD_MAP_INDAS_BSE, PARENT_CHILD_MAP_BANKING_BSE
+    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING, PARENT_CHILD_MAP_INDAS_BSE, PARENT_CHILD_MAP_BANKING_BSE, \
+    PARENT_CHILD_MAP_BSE_NBFC
 
 settings = get_settings()
 
@@ -894,8 +895,8 @@ async def bse_safe_build(data, file_url=None, bse_format=None):
     if isinstance(data, str):
         data = json.loads(data)
 
-    if file_url and "NBFC_INDAS" in file_url:
-        return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
+    if bse_format == "NBFC":
+        return await build_hierarchy(data, PARENT_CHILD_MAP_BSE_NBFC)
     if file_url and "_GI_" in file_url:
         return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
     if file_url and "_LI_" in file_url:
@@ -1753,7 +1754,7 @@ async def bse_decide_quarterly_format(response_list):
     result = {}
     if frmt in ["Other", "INDAS"]:
         result = await bse_convert_to_quarterly_format(response_list)
-    elif frmt in ["BANKING"]:
+    elif frmt in ["BANKING", "NBFC"]:
         result = await bse_banking_convert_to_quarterly_format(response_list)
     return result
 
@@ -1924,6 +1925,22 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                         final_data
                     )
                     return structured_with_values, amount_type, "BANKING"
+
+            if "NBFC" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="NBFC")
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "NBFC"
 
             return [], None, None
 

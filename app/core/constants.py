@@ -1616,3 +1616,94 @@ PARENT_CHILD_MAP_BANKING_BSE = {
     "Disclosure of notes on financial results": [],
 
 }
+
+PARENT_CHILD_MAP_BSE_NBFC = {
+    "income": [
+        "revenue from operations",
+        "interest income",
+        "dividend income",
+        "rental income",
+        "fees and commission income",
+        "net gain on fair value changes",
+        "net gain on derecognition of financial instruments under amortised cost category",
+        "sale of products (including excise duty)",
+        "sale of services",
+        "other revenue from operations",
+        "income on derecognised (assigned) loans",
+        "other operating income",
+        "total other revenue from operations",
+        "total revenue from operations",
+        "other income",
+        "total income"
+    ],
+
+    "expenses": [
+        "cost of materials consumed",
+        "purchases of stock-in-trade",
+        "changes in inventories of finished goods, work-in-progress and stock-in-trade",
+        "employee benefit expense",
+        "finance costs",
+        "depreciation, depletion and amortisation expense",
+        "fees and commission expense",
+        "net loss on fair value changes",
+        "net loss on derecognition of financial instruments under amortised cost category",
+        "impairment on financial instruments",
+        "other expenses",
+        "total other expenses",
+        "total expenses"
+    ],
+
+    "other expenses": [
+        "others"
+    ],
+
+    "Total profit before exceptional items and tax": [],
+    "Exceptional items": [],
+    "Total profit before tax": [],
+    "Tax expense": [],
+    "Current tax": [],
+    "Deferred tax": [],
+    "Total tax expenses": [],
+    "Net Profit Loss for the period from continuing operations": [],
+    "Profit (loss) from discontinued operations before tax": [],
+    "Tax expense of discontinued operations": [],
+    "Net profit (loss) from discontinued operation after tax": [],
+    "Share of profit (loss) of associates and joint ventures accounted for using equity method": [],
+    "Total profit (loss) for period": [],
+    "Other comprehensive income net of taxes": [],
+    "Total Comprehensive Income for the period": [],
+    "Total profit or loss, attributable to": [
+        "Profit or loss, attributable to owners of parent",
+        "Total profit or loss, attributable to non-controlling interests",
+    ],
+    "Total Comprehensive income for the period attributable to": [
+        "Comprehensive income for the period attributable to owners of parent",
+        "Total comprehensive income for the period attributable to owners of parent non-controlling interests",
+    ],
+
+    "Details of equity share capital": [
+        "Paid-up equity share capital",
+        "Face value of equity share capital"
+    ],
+    "Reserves excluding revaluation reserve": [],
+    "Earnings per share": [
+        "Earnings per equity share for continuing operations",
+        "Earnings per equity share",
+        "Earnings per equity share for discontinued operations",
+        "Basic earnings per share",
+        "Diluted earnings per share"
+    ],
+    "Earnings per equity share for continuing operations": [
+        "Basic earnings per share from continuing operations",
+        "Diluted earnings per share from continuing operations",
+    ],
+    "Earnings per equity share for discontinued operations": [
+        "Basic earnings per share from discontinued operations",
+        "Diluted earnings per share from discontinued operations"
+    ],
+    "Debt equity ratio": [],
+    "Debt service coverage ratio": [],
+    "Interest service coverage ratio": [],
+    "Disclosure of notes on financial results": [],
+
+}
