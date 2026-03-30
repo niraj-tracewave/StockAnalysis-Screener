@@ -1454,3 +1454,165 @@ PARENT_CHILD_MAP_BANKING = {
     "Disclosure of notes on financial results": [],
 
 }
+
+PARENT_CHILD_MAP_INDAS_BSE = {
+
+    "income": [
+        "revenue from operations",
+        "other income",
+        "total income"
+    ],
+
+    "expenses": [
+        "cost of materials consumed",
+        "purchases of stock-in-trade",
+        "changes in inventories of finished goods, work-in-progress and stock-in-trade",
+        "employee benefit expense",
+        "finance costs",
+        "depreciation, depletion and amortisation expense",
+        "other expenses",
+        "total other expenses",
+        "total expenses"
+    ],
+
+    "other expenses": [
+        "cost of equipment and software licences",
+        "other expenses",
+        "sub-contracting charges",
+        "finance cost of financial services business and finance lease activity",
+        "other manufacturing, construction and operating expenses",
+        "sales, administration and other expenses",
+        "excise duty"
+    ],
+
+    "Total profit before exceptional items and tax": [],
+    "Exceptional items": [],
+    "Total profit before tax": [],
+    "Tax expense": [],
+    "Current tax": [],
+    "Deferred tax": [],
+    "Total tax expenses": [],
+    "Net movement in regulatory deferral account balances related to profit or loss and the related deferred tax movement": [],
+    "Net Profit Loss for the period from continuing operations": [],
+    "Profit (loss) from discontinued operations before tax": [],
+    "Tax expense of discontinued operations": [],
+    "Net profit (loss) from discontinued operation after tax": [],
+    "Share of profit (loss) of associates and joint ventures accounted for using equity method": [],
+    "Total profit (loss) for period": [],
+    "Other comprehensive income net of taxes": [],
+    "Total Comprehensive Income for the period": [],
+    "Total profit or loss, attributable to": [
+        "Profit or loss, attributable to owners of parent",
+        "Total profit or loss, attributable to non-controlling interests",
+    ],
+    "Total Comprehensive income for the period attributable to": [
+        "Comprehensive income for the period attributable to owners of parent",
+        "Total comprehensive income for the period attributable to owners of parent non-controlling interests",
+    ],
+    "Details of equity share capital": [
+        "Paid-up equity share capital",
+        "Face value of equity share capital"
+    ],
+    "Details of debt securities": [],
+    "Reserves excluding revaluation reserve": [],
+    "Earnings per share": [
+        "Earnings per equity share for continuing operations",
+        "Earnings per equity share",
+        "Earnings per equity share for discontinued operations",
+    ],
+    "Earnings per equity share for continuing operations": [
+        "Basic earnings (loss) per share from continuing operations",
+        "Diluted earnings (loss) per share from continuing operations",
+    ],
+    "Earnings per equity share for discontinued operations": [
+        "Basic earnings (loss) per share from discontinued operations",
+        "Diluted earnings (loss) per share from discontinued operations"
+    ],
+    "Earnings per equity share": [
+        "Basic earnings (loss) per share from continuing and discontinued operations",
+        "Diluted earnings (loss) per share from continuing and discontinued operations"
+    ],
+    "Debt equity ratio": [],
+    "Debt service coverage ratio": [],
+    "Interest service coverage ratio": [],
+    "Disclosure of notes on financial results": [],
+
+}
+
+PARENT_CHILD_MAP_BANKING_BSE = {
+    "interest earned": [
+        "interest or discount on advances or bills",
+        "income on investments",
+        "interest on balances with reserve bank of India and other inter bank funds",
+        "others",
+        "total interest earned"
+    ],
+    "other income":[],
+    "total income":[],
+    "Expenses":[],
+
+    "interest expended": [],
+    "operating expenses": [
+        "employees cost",
+        "details of other operating expenses",
+        "description of other operating expenses",
+        "operating Expenses relating to insurance business",
+        "rent, taxes & lighting",
+        "printing and stationery",
+        "advertisement and publicity",
+        "(a) depreciation on bank's property other than Leased Assets",
+        "directors' fees, allowances and expenses",
+        "auditors' fees and expenses (including branch auditors' fees and expenses)",
+        "law Charges",
+        "postage, Telegrams, Telephones etc.",
+        "insurance+others",
+        "Repairs and maintenance",
+        "claims and benefits paid and other expenses pertaining to insurance business",
+        "other operating expenses",
+        "Other operating expesnes",
+        "total other operating Expenses",
+        "total Operating Expenses",
+    ],
+    "Total expenditure excluding provisions and contingencies": [],
+    "Operating profit before provision and contingencies": [],
+    "Provisions other than tax and contingencies": [],
+    "Exceptional items": [],
+    "Total profit (loss) from ordinary activities before tax": [],
+    "Provision for Tax": [],
+    "Net profit (loss) from ordinary activities after tax": [],
+    "Extraordinary items net of tax expenses": [],
+    "Net profit (loss) for the period": [],
+    "Share of profit (loss) of associates": [],
+    "Profit (loss) of minority interest": [],
+    "Net Profit (loss) after taxes minority interest and share of profit (loss) of associates": [],
+    "Details of equity share capital [Abstract]": [
+      "Paid-up equity share capital",
+      "Face value of equity share capital"
+    ],
+    "Reserve excluding revaluation reserves (as per balance sheet of previous accounting year)": [],
+    "Analytical ratios": [
+        "percentage of share held by government of India",
+        "capital adequacy ratio",
+        "CET 1 ratio",
+        "Additional Tier 1 ratio"
+    ],
+    "Earnings per share before extraordinary items": [
+        "Basic earnings per share before extraordinary items",
+        "Diluted earnings per share before extraordinary items",
+    ],
+
+    "Earnings per share after extraordinary items": [
+        "Basic earnings per share after extraordinary items",
+        "Diluted earnings per share after extraordinary items"
+    ],
+
+    "NPA Ratios": [
+        "Amount of gross non-performing assets",
+        "Amount of net non-performing assets",
+        "% of gross NPAs",
+        "% of net NPAs",
+        "Return on assets",
+    ],
+    "Disclosure of notes on financial results": [],
+
+}

@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
 from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI, \
-    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING
+    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING, PARENT_CHILD_MAP_INDAS_BSE, PARENT_CHILD_MAP_BANKING_BSE
 
 settings = get_settings()
 
@@ -790,6 +790,88 @@ async def build_hierarchy(flat_data, parent_child_map):
     return roots
 
 
+async def bse_build_hierarchy(flat_data, parent_child_map):
+    import json
+
+    if isinstance(flat_data, str):
+        flat_data = json.loads(flat_data)
+
+    # -------------------------
+    # STEP 1 — create parent containers
+    # -------------------------
+    parent_nodes = {
+        await normalize(parent): {
+            "heading": parent.title(),
+            "value": None,
+            "child": []
+        }
+        for parent in parent_child_map.keys()
+    }
+
+    # -------------------------
+    # STEP 2 — build child → parent lookup
+    # -------------------------
+    child_to_parent = {
+        await normalize(child): await normalize(parent)
+        for parent, childs in parent_child_map.items()
+        for child in childs
+    }
+
+    # -------------------------
+    # STEP 3 — insert nested parents first
+    # (IMPORTANT)
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        parent_key = await normalize(parent)
+
+        for child in children:
+            child_key = await normalize(child)
+
+            # IMPORTANT: prevent self-reference loop
+            if child_key == parent_key:
+                continue
+
+            if child_key in parent_nodes:
+                parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+
+    # -------------------------
+    # STEP 4 — now attach flat rows in order
+    # -------------------------
+    for row in flat_data:
+        if not isinstance(row, dict):
+            continue
+        if row.get("heading") is None:
+            continue
+        heading_raw = row.get("heading", "").strip()
+        heading = await normalize(heading_raw)
+        value = row.get("value")
+
+        if heading in parent_nodes:
+            if value is None:
+                continue
+
+        node = {
+            "heading": heading,
+            "value": value,
+            "child": []
+        }
+        if heading in child_to_parent:
+            parent_key = child_to_parent[heading]
+            parent_nodes[parent_key]["child"].append(node)
+
+    # -------------------------
+    # STEP 5 — find real roots
+    # -------------------------
+    all_children = set(child_to_parent.keys())
+
+    roots = []
+    for parent in parent_child_map:
+        if await normalize(parent) not in all_children:
+            roots.append(parent_nodes[await normalize(parent)])
+
+    return roots
+
+
 async def safe_build(data, file_url=None):
     import json
     if isinstance(data, str):
@@ -805,6 +887,23 @@ async def safe_build(data, file_url=None):
         return await build_hierarchy(data, PARENT_CHILD_MAP_INDAS)
     if file_url and "_BANKING_" in file_url:
         return await build_hierarchy(data, PARENT_CHILD_MAP_BANKING)
+    return await build_hierarchy(data, PARENT_CHILD_MAP)
+
+async def bse_safe_build(data, file_url=None, bse_format=None):
+    import json
+    if isinstance(data, str):
+        data = json.loads(data)
+
+    if file_url and "NBFC_INDAS" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
+    if file_url and "_GI_" in file_url:
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
+    if file_url and "_LI_" in file_url:
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_LI)
+    if file_url and "_Ind_As_" in file_url:
+        return await bse_build_hierarchy(data, PARENT_CHILD_MAP_INDAS_BSE)
+    if bse_format == "Banking":
+        return await bse_build_hierarchy(data, PARENT_CHILD_MAP_BANKING_BSE)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -1174,9 +1273,13 @@ async def fetch_bse_th_tr_from_table(rows_data):
                     section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
                     f_json['heading'] = section_name
                     value_tag = tds[2].find("ix:nonfraction")
-                    text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
-                    value = await parse_numeric(text)
-                f_json['value'] = value
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
             final_data.append(f_json)
     return final_data
 
@@ -1523,6 +1626,39 @@ async def li_build_node(item, quarter_index, amount_type):
 
     return node
 
+async def bse_banking_build_node(item, quarter_index, amount_type):
+    value = item.get("value")
+    # -------------------------
+    # APPLY AMOUNT CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 100
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 1_00_00_000
+
+    node = {
+        "key": await normalize(item["heading"]),
+        "label": item["heading"],
+        "values": [None] * (quarter_index + 1),
+        "type": "group" if item.get("child") else "single"
+    }
+
+    # set value
+    if item.get("value") is not None:
+        node["values"][quarter_index] = value
+
+    if item.get("child"):
+        node["children"] = [
+            await bse_banking_build_node(child, quarter_index, amount_type)
+            for child in item["child"]
+        ]
+
+    return node
+
 
 async def li_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
 
@@ -1560,6 +1696,44 @@ async def li_inject_into_existing(existing_node, new_node, quarter_index, amount
                     child,
                     quarter_index, amount_type
                 )
+
+async def bse_banking_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
+
+    # expand values list
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    value = new_node.get("value")
+
+    # -------------------------
+    # APPLY SAME CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
+    # assign value
+    if value is not None:
+        existing_node["values"][quarter_index] = value
+
+    # handle children (IMPORTANT: index-based, not key-based)
+    if "children" in existing_node and new_node.get("child"):
+
+        for i, child in enumerate(new_node["child"]):
+
+            if i < len(existing_node["children"]):
+                await bse_banking_inject_into_existing(
+                    existing_node["children"][i],
+                    child,
+                    quarter_index, amount_type
+                )
+
 async def get_format_type(response_list):
     if not response_list or not response_list[0]:
         return None  # or "other" if you prefer
@@ -1572,6 +1746,15 @@ async def decide_quarterly_format(response_list):
         result = await convert_to_quarterly_format(response_list)
     elif frmt in ["LI"]:
         result = await li_convert_to_quarterly_format(response_list)
+    return result
+
+async def bse_decide_quarterly_format(response_list):
+    frmt = await get_format_type(response_list)
+    result = {}
+    if frmt in ["Other", "INDAS"]:
+        result = await bse_convert_to_quarterly_format(response_list)
+    elif frmt in ["BANKING"]:
+        result = await bse_banking_convert_to_quarterly_format(response_list)
     return result
 
 async def li_convert_to_quarterly_format(response_list):
@@ -1593,6 +1776,31 @@ async def li_convert_to_quarterly_format(response_list):
             # next quarters → inject values
             else:
                 await li_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
+    }
+
+async def bse_banking_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            # first quarter → build structure
+            if quarter_index == 0:
+                node = await bse_banking_build_node(item, quarter_index, meta.get("amount_type"))
+                root_nodes.append(node)
+
+            # next quarters → inject values
+            else:
+                await bse_banking_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
 
     return {
         "headers": headers,
@@ -1680,26 +1888,48 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
-            table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results" in x)
+            result_type = None
+            if heading:
+                text = heading.get_text(strip=True)
+                result_type = text.split("-")[-1].strip()
 
-            if table:
-                rows = [
-                    tr for tr in table.find_all("tr")
-                    if tr.get_text(strip=True)
-                ]
-                final_data = await fetch_bse_th_tr_from_table(rows)
-                structured = await safe_build(final_data)
-                structured_with_values = await inject_values_into_hierarchy(
-                    structured,
-                    final_data
-                )
-                return structured_with_values, amount_type
+            if "_Ind_As_" in url:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
 
-            return [], None
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, url)
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "INDAS"
+            if "Banking" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
 
-        return structured_with_values
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="Banking")
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "BANKING"
+
+            return [], None, None
+
+        return structured_with_values, None, None
     except Exception as e:
-        return [], None
+        return [], None, None
 
 def get_today_file():
     today = datetime.now().strftime("%Y-%m-%d")

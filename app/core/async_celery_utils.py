@@ -18,7 +18,7 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     save_quarterly_result_processed_symbol, parse_financial_name, fetch_bse_integrated_filing_financials_data_from, \
     bse_convert_to_quarterly_format, update_nse_bse_scrip_code_load_processed_symbols, \
     update_nse_bse_scrip_code_save_processed_symbol, update_nse_bse_price_data_load_processed_symbols, \
-    update_nse_bse_price_data_save_processed_symbol, decide_quarterly_format
+    update_nse_bse_price_data_save_processed_symbol, decide_quarterly_format, bse_decide_quarterly_format
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -821,15 +821,16 @@ async def fetch_stock_quarterly_result_data_async():
                                     ixbrl = integrated_filing_obj.get("xbrlurl")
                                     if consolidated == "consolidated" and financial_name_obj.get("period") == "qtr":
                                         url = f"https://www.bseindia.com{ixbrl}"
-                                        output, amount_type = await fetch_bse_integrated_filing_financials_data_from(url)
+                                        output, amount_type, format_type = await fetch_bse_integrated_filing_financials_data_from(url)
                                         output.append({
                                             "date": qe_date,
                                             "consolidated": consolidated,
-                                            "amount_type": amount_type
+                                            "amount_type": amount_type,
+                                            "format": format_type
                                         })
                                         response_list.append(output)
                                 if response_list:
-                                    quarterly_result = await bse_convert_to_quarterly_format(response_list)
+                                    quarterly_result = await bse_decide_quarterly_format(response_list)
                             if quarterly_result:
                                 company_stock = QuarterlyResultDateset(
                                     company_id=company.id,
