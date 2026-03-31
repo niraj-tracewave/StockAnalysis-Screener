@@ -1735,6 +1735,51 @@ async def bse_banking_inject_into_existing(existing_node, new_node, quarter_inde
                     quarter_index, amount_type
                 )
 
+async def bse_nbfc_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
+
+    # expand values
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    value = new_node.get("value")
+
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
+    if value is not None:
+        existing_node["values"][quarter_index] = value
+
+    # =========================
+    # ✅ FIX: KEY-BASED CHILD MATCHING
+    # =========================
+    if "children" in existing_node and new_node.get("child"):
+
+        # build map from existing children
+        child_map = {
+            child["key"]: child
+            for child in existing_node["children"]
+        }
+
+        for child in new_node["child"]:
+
+            child_key = await normalize(child["heading"])
+            existing_child = child_map.get(child_key)
+
+            if existing_child:
+                await bse_nbfc_inject_into_existing(
+                    existing_child,
+                    child,
+                    quarter_index,
+                    amount_type
+                )
+
 async def get_format_type(response_list):
     if not response_list or not response_list[0]:
         return None  # or "other" if you prefer
@@ -1754,8 +1799,10 @@ async def bse_decide_quarterly_format(response_list):
     result = {}
     if frmt in ["Other", "INDAS"]:
         result = await bse_convert_to_quarterly_format(response_list)
-    elif frmt in ["BANKING", "NBFC"]:
+    elif frmt in ["BANKING"]:
         result = await bse_banking_convert_to_quarterly_format(response_list)
+    elif frmt in ["NBFC"]:
+        result = await bse_nbfc_convert_to_quarterly_format(response_list)
     return result
 
 async def li_convert_to_quarterly_format(response_list):
@@ -1802,6 +1849,50 @@ async def bse_banking_convert_to_quarterly_format(response_list):
             # next quarters → inject values
             else:
                 await bse_banking_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
+    }
+
+async def bse_nbfc_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+    key_map = {}   # ✅ NEW
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            key = await normalize(item["heading"])   # ✅ NEW
+
+            # -------------------------
+            # FIRST QUARTER → BUILD
+            # -------------------------
+            if quarter_index == 0:
+                node = await bse_banking_build_node(
+                    item, quarter_index, meta.get("amount_type")
+                )
+                root_nodes.append(node)
+
+                key_map[node["key"]] = node   # ✅ NEW
+
+            # -------------------------
+            # NEXT QUARTERS → FIXED INJECTION
+            # -------------------------
+            else:
+                existing_node = key_map.get(key)   # ✅ FIX
+
+                if existing_node:
+                    await bse_nbfc_inject_into_existing(
+                        existing_node,
+                        item,
+                        quarter_index,
+                        meta.get("amount_type")
+                    )
 
     return {
         "headers": headers,

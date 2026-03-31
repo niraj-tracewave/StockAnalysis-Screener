@@ -814,7 +814,7 @@ async def fetch_stock_quarterly_result_data_async():
                             quarterly_result = []
                             if integrated_filing_financials_list:
                                 response_list = []
-                                for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
+                                for integrated_filing_obj in integrated_filing_financials_list.get("Table")[8:]:
                                     financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
                                     qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
                                     consolidated = financial_name_obj.get("type")
@@ -839,8 +839,8 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
-                            else:
-                                unsaved_symbols.append(company.nse_symbol)
+                            # else:
+                            #     unsaved_symbols.append(company.nse_symbol)
                         elif company.nse_code:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
                             quarterly_result = []
