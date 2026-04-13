@@ -224,7 +224,7 @@ def load_angel_map():
     ANGEL_NSE_MAP = {
         item["symbol"]: item["token"]
         for item in data
-        if item.get("exch_seg") == "NSE"
+        if item.get("exch_seg") == "NSE" or item.get("exch_seg") == "BSE"
     }
 
     print("Angel NSE map reloaded")

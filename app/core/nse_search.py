@@ -183,3 +183,9 @@ async def fetch_bse_exact_symbol_data(search):
             })
         return company_list
     return company_list
+
+
+async def fetch_bse_exact_symbol_data_from_json(search):
+    security_code = await get_nse_code_from_angel(search)
+
+    return security_code
