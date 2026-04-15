@@ -208,3 +208,14 @@ __marimo__/
 .vscode/
 
 .idea/
+# JSON data files
+*.json
+
+# Log files
+*.log
+
+# Specific folders (if needed)
+logs/
+
+# Your generated stock files (optional fine control)
+StockAnalysis-Screener/*.json
