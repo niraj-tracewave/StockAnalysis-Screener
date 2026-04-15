@@ -1,9 +1,11 @@
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends
+from fastapi.responses import FileResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, selectinload
 
@@ -972,6 +974,13 @@ class CompanyStockFetchService:
             data={
             }
         )
+
+    @staticmethod
+    async def download_scrip_master_file():
+        file_path = os.path.join(os.getcwd(), "OpenAPIScripMaster.json")
+        return FileResponse(file_path, media_type="application/json", filename="OpenAPIScripMaster.json", headers={
+        "Content-Disposition": "attachment; filename=OpenAPIScripMaster.json"
+    })
 
     @staticmethod
     async def fetch_and_get_scrip_code_from_json_file():

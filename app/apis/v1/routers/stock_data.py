@@ -77,3 +77,7 @@ async def search_company(symbol: str, days: str,
                           db: Session = Depends(get_db),
                           ):
     return await CompanyStockFetchService.fetch_listed_company_chart_data(symbol, days, scrip, db)
+
+@router.get("/download-scripcode-file/", status_code=status.HTTP_200_OK)
+async def search_company():
+    return await CompanyStockFetchService.download_scrip_master_file()

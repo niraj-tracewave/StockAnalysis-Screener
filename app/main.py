@@ -1,5 +1,7 @@
 import asyncio
 
+from starlette.staticfiles import StaticFiles
+
 from app.core.angel_auto_login import AngelAutoLogin
 # from app.core.angel_container import angel_container
 from app.core.angel_ws import AngelWSClient
@@ -52,6 +54,7 @@ app = FastAPI(
 
 app.include_router(api_router, prefix="/apis/v1")
 app.include_router(stock_ws.router)
+app.mount("/", StaticFiles(directory="."), name="static")
 
 
 @app.get("/health", tags=["health"])
