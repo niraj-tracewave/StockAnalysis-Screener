@@ -1650,7 +1650,8 @@ PARENT_CHILD_MAP_BSE_NBFC = {
         "impairment on financial instruments",
         "other expenses",
         "total other expenses",
-        "total expenses"
+        "total expenses",
+        "others expenses"
     ],
 
     "other expenses": [
@@ -1705,5 +1706,279 @@ PARENT_CHILD_MAP_BSE_NBFC = {
     "Debt service coverage ratio": [],
     "Interest service coverage ratio": [],
     "Disclosure of notes on financial results": [],
+
+}
+
+
+PARENT_CHILD_MAP_BSE_GI = {
+    "Operating income": [
+        "Gross Premiums Written",
+        "Net Premium written",
+        "Premium Earned (Net)",
+        "Income from investments (net)",
+        "Other income",
+        "Other income Foreign exchange Gain/Loss",
+        "Total other income",
+        "Total income",
+        "Other income -Foreign exchange Gain/( Loss)"
+    ],
+
+    "Operating expenses": [
+        "Commissions & Brokerage (net)",
+        "Net commission",
+        "Operating Expenses related to insurance business",
+        "Employees remuneration and welfare expenses",
+        "Other operating expenses",
+        "Other operating expenses",
+        "Total other operating expenses",
+        "Total operating expenses related to insurance business",
+        "Premium Deficiency",
+        "Incurred Claims",
+        "Claims Paid",
+        "Change in Outstanding Claims (incl. IBNR/IBNER)",
+        "Total Incurred claims",
+        "Total Expense",
+        "Underwriting Profit(Loss)",
+        "Provisions for doubtful debts (including bad debts written off)",
+        "Provisions for diminution in value of investments",
+        "Operating Profit/loss:",
+        "Appropriations",
+        "Transfer to Profit and Loss A/c",
+        "Transfer to reserves"
+    ],
+
+    "Income in shareholder's account": [
+        "Transfer from Policyholders' Fund",
+        "Income from investments",
+        "Other income",
+        "Other income",
+        "Share of Profit in Associates Companies",
+        "Total other income",
+        "Total income"
+    ],
+
+    "Expenses": [
+        "Expenses other than those related to insurance business",
+        "Provisions for doubtful debts (including bad debts written off)",
+        "Provisions for diminution in value of investments",
+        "Total Expense"
+    ],
+
+    "Profit / Loss before extraordinary items": [],
+    "Extraordinary Items": [],
+    "Profit/ (loss) before tax": [],
+    "Provision for tax": [],
+    "Profit / (loss) after tax": [],
+    "Divident per share": [
+        "Interim Dividend",
+        "Final dividend"
+    ],
+    "Opening Balance and Appropriations from Pat (Net)": [],
+    "Opening Balance and Approproations from PAT (Net)": [],
+    "Profit (loss) carried to balance sheet": [],
+    "Paid up equity capital": [],
+    "Reserve and Surplus (Excluding Revaluation Reserve)": [],
+    "Reserve and Surplus (Excluding Revualuation Reserve)": [],
+    "Fair value change account and revaluation reserve": [],
+    "Assets": [
+        "Investments",
+        "Shareholders Fund",
+        "Shareholders' Fund",
+        "Policyholders' Fund",
+        "Total investments",
+        "Other Assets (Net of current liabilities and provisions)",
+        "Other Assets (Net of current liabilites and provisions)",
+        "Total assets"
+    ],
+
+    "Analytical Ratios": [
+        "Solvency ratio",
+        "Expenses of management ratio",
+        "Incurred Claim Ratio",
+        "Net retention ratio",
+        "Combined ratio",
+        "Earning per share",
+        "NPA ratios",
+        "Yield on Investments",
+        "Public shareholding (in case of public sector insurance companies)"
+    ],
+
+    "Earning per share": [
+        "Basic and diluted EPS before extraordinary items (net of tax expense) for the period (not to be annualized)",
+        "Basic and diluted EPS after extraordinary items (net of tax expense) for the period (not to be annualized)"
+    ],
+    "NPA ratios": [
+        "Gross NPAs",
+        "Net NPAs",
+        "Percentage of Gross NPAs",
+        "Percentage of net NPAs"
+    ],
+
+    "Yield on Investments": [
+        "Without unrealized gains",
+        "With unrealised gains"
+    ],
+
+    "Public shareholding (in case of public sector insurance companies)": [
+        "Number of shares",
+        "Percentage of shareholding",
+        "Percentage of government holding"
+    ],
+
+    "Investor Compliants": [
+        "No of investor complaints pending at the beginning of the period",
+        "No of investor complaints during the period",
+        "No of investor complaints disposed off during the period",
+        "No of investor complaints remaining unresolved at the end of the period"
+    ]
+}
+
+PARENT_CHILD_MAP_BSE_LI = {
+    "Income": [
+        "Transfer from Poliycholders' Account",
+        "Income under Shareholders' Account",
+        "Investment Income",
+        "Other income",
+        "Other Income",
+        "Total Other income",
+        "Total income under shareholders account",
+        "Total Income"
+    ],
+
+    "Expenses": [
+        "Expenses other than those related to insurance business",
+        "Transfer of funds to policyholders account",
+        "Provisions for doubtful debts (including write off)",
+        "Provisions for diminution in value of investments",
+        "Total Expenses",
+        "Profit/ (loss) before tax",
+        "Provisions for tax",
+        "Current tax",
+        "Deffered tax",
+        "Profit / (loss) after tax and before Extraordinary Items",
+        "Extraordinary Items (Net of tax expenses)",
+        "Profit/ (loss) after tax and Extraordinary Items",
+        "Dividend per share",
+        "Interim Dividend",
+        "Final Dividend",
+        "Profit/(Loss) carried to Balance Sheet",
+        "Paid up equity share capital",
+        "Reserve & Surplus (excluding Revaluation Reserve)",
+        "Fair Value Change Account and Revaluation Reserve (Shareholders)",
+        "Assets"
+    ],
+
+    "Assets": [
+        "Investments:",
+        "Shareholders",
+        "Policyholders Fund excluding Linked Assets",
+        "Assets held to cover Linked Liabilities",
+        "Total Investments",
+        "Other Assets (Net of current liabilities and provisions)",
+        "Total Assets"
+    ],
+    "Analytical Ratios":[
+        "Solvency Ratio",
+        "Expenses of Management Ratio",
+        "Policyholder 's liabilities to shareholders' fund",
+        "Earnings per share (Rs.):",
+        "NPA ratios: (for policyholders' fund)"
+    ],
+    "Earnings per share (Rs.):": [
+        "Basic and diluted EPS before extraordinary items (net of tax expense) for the period (not to be annualized)",
+        "Basic and diluted EPS after extraordinary items (net of tax expense) for the period (not to be annualized)"
+    ],
+    "NPA ratios: (for policyholders' fund)":[
+        "Gross NPAs",
+        "Net NPAs",
+        "% of Gross NPAs",
+        "% of Net NPAs"
+    ],
+
+    "Gross NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "Net NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "% of Gross NPAs":[
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "% of Net NPAs": [
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+
+    "Yield on Investments (on policyholders' fund)":[
+        "Without unrealised gains",
+        "With unrealised gains"
+    ],
+
+    "Without unrealised gains": [
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "With unrealised gains": [
+        "Non Linked",
+        "Par",
+        "Non Par",
+        "Linked",
+        "Par",
+        "Non Par"
+    ],
+    "NPA ratios: (for shareholders' fund)":[
+        "Shareholders Gross NPAs",
+        "Shareholders Net NPAs",
+        "Shareholders Percentage of Gross NPAs",
+        "Shareholders Percentage of Net NPAs"
+    ],
+
+    "Yield on Investments (on shareholders' fund)":[
+        "Shareholders Without unrealised gains",
+        "Shareholders With unrealised gains"
+    ],
+
+    "Persistency Ratio": [
+        "13th Month",
+        "25th Month",
+        "37th Month",
+        "49th Month",
+        "61st Month"
+    ],
+
+    "Other Rations":[
+        "Conservation Ratio",
+        "Percentage of shares held by Government of India (in case of public sector insurance companies)"
+    ],
+
+    "Investor Compliants":[
+        "No of investor complaints pending at the beginning of the period",
+        "No of investor complaints during the period",
+        "No of investor complaints disposed off during the period",
+        "No of investor complaints remaining unresolved at the end of the period"
+    ]
 
 }

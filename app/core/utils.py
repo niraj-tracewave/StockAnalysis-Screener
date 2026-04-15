@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from app.core.config import get_settings
 from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI, \
     PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING, PARENT_CHILD_MAP_INDAS_BSE, PARENT_CHILD_MAP_BANKING_BSE, \
-    PARENT_CHILD_MAP_BSE_NBFC
+    PARENT_CHILD_MAP_BSE_NBFC, PARENT_CHILD_MAP_BSE_GI, PARENT_CHILD_MAP_BSE_LI
 
 settings = get_settings()
 
@@ -410,8 +410,101 @@ async def gi_inject_values_into_hierarchy(structure, values_json):
     await traverse(structure)
     return structure
 
+async def bse_gi_inject_values_into_hierarchy(structure, values_json):
+
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item["value"])
+
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_BSE_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    async def traverse(nodes, parent=None):
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+            parent_key = await normalize(parent) if parent else None
+
+            # ✅ STRICT: only assign if mapping matches
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+                    if value_lookup[child_key]:
+                        node["value"] = value_lookup[child_key].popleft()
+
+            await traverse(node["child"], node["heading"])
+
+    await traverse(structure)
+    return structure
+
 
 async def li_inject_values_into_hierarchy(structure, values_json):
+
+    # -------------------------
+    # STEP 1 — build lookup (heading → queue of values)
+    # -------------------------
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item.get("value"))
+
+    # -------------------------
+    # STEP 2 — normalize parent-child map
+    # -------------------------
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    # -------------------------
+    # STEP 3 — track index per (parent, child)
+    # -------------------------
+    usage_counter = defaultdict(int)
+
+    # -------------------------
+    # STEP 4 — recursive traversal
+    # -------------------------
+    async def traverse(nodes, parent=None):
+        parent_key = await normalize(parent) if parent else None
+
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+
+            # unique key for duplicate tracking
+            unique_key = (parent_key, child_key)
+
+            # ✅ STRICT mapping check
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+
+                    if value_lookup[child_key]:
+                        index = usage_counter[unique_key]
+
+                        # assign sequential value safely
+                        try:
+                            node["value"] = value_lookup[child_key][index]
+                        except IndexError:
+                            node["value"] = None
+
+                        usage_counter[unique_key] += 1
+
+            # 🔁 recurse
+            if node.get("child"):
+                await traverse(node["child"], node["heading"])
+
+    # -------------------------
+    # STEP 5 — run traversal
+    # -------------------------
+    await traverse(structure)
+
+    return structure
+
+async def bse_li_inject_values_into_hierarchy(structure, values_json):
 
     # -------------------------
     # STEP 1 — build lookup (heading → queue of values)
@@ -897,10 +990,10 @@ async def bse_safe_build(data, file_url=None, bse_format=None):
 
     if bse_format == "NBFC":
         return await build_hierarchy(data, PARENT_CHILD_MAP_BSE_NBFC)
-    if file_url and "_GI_" in file_url:
-        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
-    if file_url and "_LI_" in file_url:
-        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_LI)
+    if bse_format == "General Insurance":
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_BSE_GI)
+    if bse_format == "Life Insurance":
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_BSE_LI)
     if file_url and "_Ind_As_" in file_url:
         return await bse_build_hierarchy(data, PARENT_CHILD_MAP_INDAS_BSE)
     if bse_format == "Banking":
@@ -1536,10 +1629,14 @@ async def bse_build_node(item, node_map, quarter_index, amount_type):
 
     if amount_type == "Millions":
         if isinstance(value, (int, float)):
-            value = round(value / 10)
-    elif amount_type == "Lakhs":
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = round(value / 10, 2)
+
+    if amount_type == "Lakhs":
         if isinstance(value, (int, float)):
-            value = round(value / 100, 2)
+            # value = round(value / 100, 2)
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = round(value / 100, 2)
     elif amount_type == "Crores":
         value = value
 
@@ -1578,6 +1675,33 @@ async def convert_to_quarterly_format(response_list):
 
         for item in quarter[:-1]:
             await build_node(item, root_map, quarter_index, meta.get("amount_type"))
+
+    # convert children dict → list
+    def finalize(node):
+        if node["children"]:
+            node["children"] = [finalize(child) for child in node["children"].values()]
+        else:
+            node.pop("children", None)
+        return node
+
+    rows = [finalize(node) for node in root_map.values()]
+
+    return {
+        "headers": headers,
+        "rows": rows
+    }
+
+async def bse_gl_convert_to_quarterly_format(response_list):
+    headers = []
+    root_map = {}
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for item in quarter[:-1]:
+            await bse_build_node(item, root_map, quarter_index, meta.get("amount_type"))
 
     # convert children dict → list
     def finalize(node):
@@ -1803,6 +1927,8 @@ async def bse_decide_quarterly_format(response_list):
         result = await bse_banking_convert_to_quarterly_format(response_list)
     elif frmt in ["NBFC"]:
         result = await bse_nbfc_convert_to_quarterly_format(response_list)
+    elif frmt in ["General Insurance"]:
+        result = await bse_gl_convert_to_quarterly_format(response_list)
     return result
 
 async def li_convert_to_quarterly_format(response_list):
@@ -1855,6 +1981,15 @@ async def bse_banking_convert_to_quarterly_format(response_list):
         "rows": root_nodes
     }
 
+async def fill_missing_values(node, quarter_index):
+    # If this quarter value is missing → append None
+    if len(node["values"]) <= quarter_index:
+        node["values"].append(None)
+
+    # Do same for children
+    for child in node.get("children", []):
+        await fill_missing_values(child, quarter_index)
+
 async def bse_nbfc_convert_to_quarterly_format(response_list):
     headers = []
     root_nodes = []
@@ -1893,6 +2028,9 @@ async def bse_nbfc_convert_to_quarterly_format(response_list):
                         quarter_index,
                         meta.get("amount_type")
                     )
+
+        for node in root_nodes:
+            await fill_missing_values(node, quarter_index)
 
     return {
         "headers": headers,
@@ -1980,7 +2118,7 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
-            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results" in x)
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x)
             result_type = None
             if heading:
                 text = heading.get_text(strip=True)
@@ -2032,6 +2170,41 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                         final_data
                     )
                     return structured_with_values, amount_type, "NBFC"
+
+            if "General Insurance".lower() in result_type:
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="General Insurance")
+                    print(structured)
+                    structured_with_values = await bse_gi_inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "General Insurance"
+
+            if "Life Insurance".lower() in result_type:
+                print("okok")
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="Life Insurance")
+                    print(structured)
+                    structured_with_values = await bse_li_inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "Life Insurance"
 
             return [], None, None
 
