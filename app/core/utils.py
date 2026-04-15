@@ -1001,3 +1001,62 @@ async def update_nse_bse_price_data_save_processed_symbol(symbols, key, file_nam
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
+
+async def update_nse_bse_update_stock_data_load_processed_symbols(file_name):
+    file = get_custom_today_file(file_name)
+    if os.path.exists(file):
+        with open(file, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return set()
+
+            data = json.loads(content)
+
+            processed = data.get("processed_symbols", [])
+            current = data.get("current_processed_symbols", [])
+            error = data.get("error", [])
+
+            return set(processed) | set(current) | set(error)
+    return set()
+
+async def manage_nse_bse_update_stock_data_load_processed_symbols(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        # remove from current
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
