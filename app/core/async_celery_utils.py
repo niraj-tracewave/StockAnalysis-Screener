@@ -779,7 +779,9 @@ async def fetch_stock_quarterly_result_data_async():
                             delete(QuarterlyResultDateset)
                             .where(QuarterlyResultDateset.company_id == company.id)
                         )
-                        if company.bse_code and company.nse_code:
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        if nse_company_list and bse_company_list:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
                                 company.nse_symbol, "equity")
                             quarterly_result = []
@@ -814,7 +816,7 @@ async def fetch_stock_quarterly_result_data_async():
                                 processed_symbols.append(company.nse_symbol)
                             else:
                                 unsaved_symbols.append(company.nse_symbol)
-                        elif company.bse_code:
+                        elif bse_company_list:
                             integrated_filing_financials_list = await main_bse_fetch_integrated_filing_financials(
                                 company.bse_code)
                             quarterly_result = []
@@ -848,7 +850,7 @@ async def fetch_stock_quarterly_result_data_async():
                                 processed_symbols.append(company.nse_symbol)
                             else:
                                 unsaved_symbols.append(company.nse_symbol)
-                        elif company.nse_code:
+                        elif nse_company_list:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
                             quarterly_result = []
                             if integrated_filing_financials_list:
@@ -882,6 +884,8 @@ async def fetch_stock_quarterly_result_data_async():
                                 processed_symbols.append(company.nse_symbol)
                             else:
                                 unsaved_symbols.append(company.nse_symbol)
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
 
                 except Exception as e:
                     print("Error:", str(e))
