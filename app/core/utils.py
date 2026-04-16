@@ -315,9 +315,10 @@ async def fetch_symbols_from_covered_symbol_json_for_quarterly_result():
             old_skipped = set(data.get("processing", []))
             old_unsaved = set(data.get("unsaved", []))
             old_error = set(data.get("error", []))
+            old_processed = set(data.get("processed_symbols", []))
 
             print(f"{len(skipped_symbols)} skipped from json")
-            return old_skipped | old_unsaved | old_error
+            return old_skipped | old_unsaved | old_error | old_processed
 
         except Exception as e:
             return {}
@@ -1345,6 +1346,49 @@ async def fetch_th_tr_from_li_table(rows_data):
         final_data.append(f_json)
     return final_data
 
+async def bse_fetch_th_tr_from_li_table(rows_data):
+    final_data = []
+    previous_raw = None
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        tds = row.find_all("td")
+        f_json = {
+            "heading": None,
+            "value": None,
+        }
+        titles = {"Gross NPAs": "Shareholders Gross NPAs",
+                  "Net NPAs": "Shareholders Net NPAs",
+                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+                  "Without unrealised gains": "Shareholders Without unrealised gains",
+                  "With unrealised gains": "Shareholders With unrealised gains"}
+        if tds:
+            section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+            f_json['heading'] = section_name
+            if section_name == "NPA ratios: (for shareholder's fund)":
+                previous_raw = section_name
+            if tds:
+                value = None
+                if len(tds) == 4:
+                    section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    if previous_raw and previous_raw == "NPA ratios: (for shareholder's fund)" and titles.get(
+                            section_name):
+                        f_json["heading"] = titles.get(section_name) or section_name
+                    value_tag = tds[2].find("ix:nonfraction")
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
+            final_data.append(f_json)
+    return final_data
+
 async def fetch_bse_th_tr_from_table(rows_data):
     final_data = []
     for row in rows_data:
@@ -1441,7 +1485,6 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
 
             if "_GI_" in url:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
-                # print(tables)
                 table = None
                 total_rows = []
                 if tables and len(tables) > 1:
@@ -1929,6 +1972,8 @@ async def bse_decide_quarterly_format(response_list):
         result = await bse_nbfc_convert_to_quarterly_format(response_list)
     elif frmt in ["General Insurance"]:
         result = await bse_gl_convert_to_quarterly_format(response_list)
+    elif frmt in ["Life Insurance"]:
+        result = await li_convert_to_quarterly_format(response_list)
     return result
 
 async def li_convert_to_quarterly_format(response_list):
@@ -2118,12 +2163,11 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
-            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x)
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x.lower())
             result_type = None
             if heading:
                 text = heading.get_text(strip=True)
                 result_type = text.split("-")[-1].strip()
-
             if "_Ind_As_" in url:
                 table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
 
@@ -2181,7 +2225,6 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                     ]
                     final_data = await fetch_bse_th_tr_from_table(rows)
                     structured = await bse_safe_build(final_data, bse_format="General Insurance")
-                    print(structured)
                     structured_with_values = await bse_gi_inject_values_into_hierarchy(
                         structured,
                         final_data
@@ -2189,7 +2232,6 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                     return structured_with_values, amount_type, "General Insurance"
 
             if "Life Insurance".lower() in result_type:
-                print("okok")
                 table = soup.select_one("h2:-soup-contains('financial results') + p + table")
 
                 if table:
@@ -2197,9 +2239,17 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                         tr for tr in table.find_all("tr")
                         if tr.get_text(strip=True)
                     ]
-                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    start_index = None
+                    for i, tr in enumerate(rows):
+                        text = tr.get_text(" ", strip=True).lower()
+                        if "shareholder's account" in text:
+                            start_index = i
+                            break
+
+                    if start_index is not None:
+                        rows = rows[start_index + 1:]
+                    final_data = await bse_fetch_th_tr_from_li_table(rows)
                     structured = await bse_safe_build(final_data, bse_format="Life Insurance")
-                    print(structured)
                     structured_with_values = await bse_li_inject_values_into_hierarchy(
                         structured,
                         final_data
@@ -2274,7 +2324,8 @@ async def save_quarterly_result_processed_symbol(symbols, key):
     data = {
         "processing": [],
         "unsaved": [],
-        "error": []
+        "error": [],
+        "processed_symbols": []
     }
 
     if os.path.exists(file):
@@ -2285,6 +2336,10 @@ async def save_quarterly_result_processed_symbol(symbols, key):
                     data = json.loads(content)
         except json.JSONDecodeError:
             pass
+
+    if key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
 
     if key == "processing":
         data["processing"].extend(symbols)

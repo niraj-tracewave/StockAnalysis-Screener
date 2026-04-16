@@ -736,6 +736,7 @@ async def fetch_stock_quarterly_result_data_async():
     error_symbols = []
     unsaved_symbols = []
     current_processed_symbols = []
+    processed_symbols = []
     try:
         stmt = (
             select(CompanyStock)
@@ -743,7 +744,7 @@ async def fetch_stock_quarterly_result_data_async():
                 QuarterlyResultDateset,
                 CompanyStock.id == QuarterlyResultDateset.company_id
             )
-            .where(QuarterlyResultDateset.company_id.is_(None))
+            # .where(QuarterlyResultDateset.company_id.is_(None))
             .options(selectinload(CompanyStock.details))
             .execution_options(yield_per=100)
         )
@@ -774,6 +775,10 @@ async def fetch_stock_quarterly_result_data_async():
                 try:
                     print(f"\nProcessing company: {company.id} | {company.name}")
                     with db.begin_nested():
+                        db.execute(
+                            delete(QuarterlyResultDateset)
+                            .where(QuarterlyResultDateset.company_id == company.id)
+                        )
                         if company.bse_code and company.nse_code:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
                                 company.nse_symbol, "equity")
@@ -806,6 +811,7 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
+                                processed_symbols.append(company.nse_symbol)
                             else:
                                 unsaved_symbols.append(company.nse_symbol)
                         elif company.bse_code:
@@ -814,7 +820,7 @@ async def fetch_stock_quarterly_result_data_async():
                             quarterly_result = []
                             if integrated_filing_financials_list:
                                 response_list = []
-                                for integrated_filing_obj in integrated_filing_financials_list.get("Table")[8:]:
+                                for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
                                     financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
                                     qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
                                     consolidated = financial_name_obj.get("type")
@@ -839,8 +845,9 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
-                            # else:
-                            #     unsaved_symbols.append(company.nse_symbol)
+                                processed_symbols.append(company.nse_symbol)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
                         elif company.nse_code:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
                             quarterly_result = []
@@ -872,6 +879,7 @@ async def fetch_stock_quarterly_result_data_async():
                                 )
                                 db.add(company_stock)
                                 db.flush()
+                                processed_symbols.append(company.nse_symbol)
                             else:
                                 unsaved_symbols.append(company.nse_symbol)
 
@@ -888,6 +896,7 @@ async def fetch_stock_quarterly_result_data_async():
         db.close()
         await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
         await save_quarterly_result_processed_symbol(error_symbols, "error")
+        await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
         await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
 
 async def update_nse_bse_scrip_code_async():

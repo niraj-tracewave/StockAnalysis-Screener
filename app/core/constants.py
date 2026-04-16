@@ -1881,14 +1881,15 @@ PARENT_CHILD_MAP_BSE_LI = {
         "Solvency Ratio",
         "Expenses of Management Ratio",
         "Policyholder 's liabilities to shareholders' fund",
-        "Earnings per share (Rs.):",
-        "NPA ratios: (for policyholders' fund)"
+        "Policyholder's liabilities to shareholder's fund",
+        "Earnings per share (Rs.)",
+        "NPA ratios: (for policyholder's fund)"
     ],
-    "Earnings per share (Rs.):": [
+    "Earnings per share (Rs.)": [
         "Basic and diluted EPS before extraordinary items (net of tax expense) for the period (not to be annualized)",
         "Basic and diluted EPS after extraordinary items (net of tax expense) for the period (not to be annualized)"
     ],
-    "NPA ratios: (for policyholders' fund)":[
+    "NPA ratios: (for policyholder's fund)":[
         "Gross NPAs",
         "Net NPAs",
         "% of Gross NPAs",
@@ -1928,7 +1929,7 @@ PARENT_CHILD_MAP_BSE_LI = {
         "Non Par"
     ],
 
-    "Yield on Investments (on policyholders' fund)":[
+    "Yield on Investments (on policyholder's fund)":[
         "Without unrealised gains",
         "With unrealised gains"
     ],
@@ -1949,14 +1950,14 @@ PARENT_CHILD_MAP_BSE_LI = {
         "Par",
         "Non Par"
     ],
-    "NPA ratios: (for shareholders' fund)":[
+    "NPA ratios: (for shareholder's fund)":[
         "Shareholders Gross NPAs",
         "Shareholders Net NPAs",
         "Shareholders Percentage of Gross NPAs",
         "Shareholders Percentage of Net NPAs"
     ],
 
-    "Yield on Investments (on shareholders' fund)":[
+    "Yield on Investments (on shareholder's fund)":[
         "Shareholders Without unrealised gains",
         "Shareholders With unrealised gains"
     ],
