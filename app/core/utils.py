@@ -2484,3 +2484,63 @@ async def update_nse_bse_price_data_save_processed_symbol(symbols, key, file_nam
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
+
+async def update_nse_bse_newly_listed_stock_save_processed_symbol(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
+    file_path = get_custom_today_file(file_name)
+    skipped_symbols = {}
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            processed_symbols = set(data.get("processed_symbols", []))
+
+            print(f"{len(skipped_symbols)} skipped from json")
+            return processed_symbols
+
+        except Exception as e:
+            return {}
+    return {}

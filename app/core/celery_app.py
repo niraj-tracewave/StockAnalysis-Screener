@@ -21,10 +21,10 @@ celery_app.autodiscover_tasks(["app.tasks"])
 
 
 celery_app.conf.beat_schedule = {
-    "fetch-nse-company-data-every-20-minutes": {
-        "task": "fetch_and_store_company_data_from_top_50",
-        "schedule": crontab(minute="*/15"),
-    },
+    # "fetch-nse-company-data-every-20-minutes": {
+    #     "task": "fetch_and_store_company_data_from_top_50",
+    #     "schedule": crontab(minute="*/15"),
+    # },
     # "fetch_30y_stock_chart_dat_from_nse_bse": {
     #     "task": "fetch_30y_stock_chart_data",
     #     "schedule": crontab(hour=18, minute=8),
@@ -48,5 +48,13 @@ celery_app.conf.beat_schedule = {
     "fetch_and_update_nse_bse_stock_information": {
         "task": "update_nse_bse_stock_information",
         "schedule": crontab(minute="*/7"),
+    },
+    "fetch_and_update_newly_company_data": {
+        "task": "fetch_and_store_newly_company_data_from_nse_bse",
+        "schedule": crontab(
+                minute=0,
+                hour="10,13,16,19",
+                day_of_week="mon-fri",  # Monday to Friday
+        ),
     }
 }
