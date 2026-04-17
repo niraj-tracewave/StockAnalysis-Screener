@@ -13,7 +13,7 @@ from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
     QuarterlyResultDateset
-from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema
+from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
     YEAR_OR_MONTY_TO_DAYS_MAP
 from app.core.custom_error_response import CustomValidationError
@@ -1170,6 +1170,49 @@ class CompanyStockFetchService:
                             })
             return CustomJSONResponse.custom_response(
                 message="Company chart data fetched successfully",
+                data=chart_data
+            )
+        except CustomValidationError:
+            raise
+
+        except Exception as e:
+            raise CustomValidationError(
+                {"error": [str(e)]}, 200
+            )
+
+    @staticmethod
+    async def update_stock_price(
+            request: UpdateStockPriceSchema,
+            db: Session = Depends(get_db),
+    ):
+        try:
+
+            stmt = (
+                select(CompanyStock)
+                .options(selectinload(CompanyStock.details))
+                .where(
+                    or_(
+                        CompanyStock.nse_symbol == request.symbol
+                    )
+                )
+            )
+
+            result = await db.execute(stmt)
+            company = result.scalars().first()
+            chart_data = []
+            if company is None:
+                raise CustomValidationError(
+                    validations={"error": [f"Company not found for symbol : {request.symbol}"]}, status_code=400
+                )
+            if company:
+                company.details.current_price = request.price
+                await db.commit()
+
+                await db.refresh(company.details)
+
+
+            return CustomJSONResponse.custom_response(
+                message="Company stock price updated successfully",
                 data=chart_data
             )
         except CustomValidationError:

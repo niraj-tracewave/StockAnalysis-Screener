@@ -2,6 +2,7 @@ import calendar
 import os
 import re
 import unicodedata
+from collections import defaultdict, deque
 
 import aiohttp
 import pandas as pd
@@ -12,7 +13,9 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.core.config import get_settings
-from app.core.constants import PARENT_CHILD_MAP
+from app.core.constants import PARENT_CHILD_MAP, PARENT_CHILD_MAP_NBFC_INDAS, PARENT_CHILD_MAP_GI, PARENT_CHILD_MAP_LI, \
+    PARENT_CHILD_MAP_INDAS, PARENT_CHILD_MAP_BANKING, PARENT_CHILD_MAP_INDAS_BSE, PARENT_CHILD_MAP_BANKING_BSE, \
+    PARENT_CHILD_MAP_BSE_NBFC, PARENT_CHILD_MAP_BSE_GI, PARENT_CHILD_MAP_BSE_LI
 
 settings = get_settings()
 
@@ -312,9 +315,10 @@ async def fetch_symbols_from_covered_symbol_json_for_quarterly_result():
             old_skipped = set(data.get("processing", []))
             old_unsaved = set(data.get("unsaved", []))
             old_error = set(data.get("error", []))
+            old_processed = set(data.get("processed_symbols", []))
 
             print(f"{len(skipped_symbols)} skipped from json")
-            return old_skipped | old_unsaved | old_error
+            return old_skipped | old_unsaved | old_error | old_processed
 
         except Exception as e:
             return {}
@@ -346,6 +350,457 @@ async def inject_values_into_hierarchy(structure, values_json):
 
     await traverse(structure)
     return structure
+#
+# async def gi_inject_values_into_hierarchy(structure, values_json):
+#
+#     value_lookup = defaultdict(list)
+#
+#     # Step 1: build lookup with heading ONLY (raw source)
+#     for item in values_json:
+#         if item.get("value") is not None:
+#             key = await normalize(item["heading"])
+#             value_lookup[key].append(item["value"])
+#
+#     # Step 2: traverse with index tracking
+#     used_index = defaultdict(int)
+#
+#     async def traverse(nodes):
+#         for node in nodes:
+#             key = await normalize(node["heading"])
+#
+#             if key in value_lookup:
+#                 idx = used_index[key]
+#
+#                 if idx < len(value_lookup[key]):
+#                     node["value"] = value_lookup[key][idx]
+#                     used_index[key] += 1   # move pointer
+#
+#             await traverse(node["child"])
+#
+#     await traverse(structure)
+#     return structure
+
+
+async def gi_inject_values_into_hierarchy(structure, values_json):
+
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item["value"])
+
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    async def traverse(nodes, parent=None):
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+            parent_key = await normalize(parent) if parent else None
+
+            # ✅ STRICT: only assign if mapping matches
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+                    if value_lookup[child_key]:
+                        node["value"] = value_lookup[child_key].popleft()
+
+            await traverse(node["child"], node["heading"])
+
+    await traverse(structure)
+    return structure
+
+async def bse_gi_inject_values_into_hierarchy(structure, values_json):
+
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item["value"])
+
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_BSE_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    async def traverse(nodes, parent=None):
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+            parent_key = await normalize(parent) if parent else None
+
+            # ✅ STRICT: only assign if mapping matches
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+                    if value_lookup[child_key]:
+                        node["value"] = value_lookup[child_key].popleft()
+
+            await traverse(node["child"], node["heading"])
+
+    await traverse(structure)
+    return structure
+
+
+async def li_inject_values_into_hierarchy(structure, values_json):
+
+    # -------------------------
+    # STEP 1 — build lookup (heading → queue of values)
+    # -------------------------
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item.get("value"))
+
+    # -------------------------
+    # STEP 2 — normalize parent-child map
+    # -------------------------
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    # -------------------------
+    # STEP 3 — track index per (parent, child)
+    # -------------------------
+    usage_counter = defaultdict(int)
+
+    # -------------------------
+    # STEP 4 — recursive traversal
+    # -------------------------
+    async def traverse(nodes, parent=None):
+        parent_key = await normalize(parent) if parent else None
+
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+
+            # unique key for duplicate tracking
+            unique_key = (parent_key, child_key)
+
+            # ✅ STRICT mapping check
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+
+                    if value_lookup[child_key]:
+                        index = usage_counter[unique_key]
+
+                        # assign sequential value safely
+                        try:
+                            node["value"] = value_lookup[child_key][index]
+                        except IndexError:
+                            node["value"] = None
+
+                        usage_counter[unique_key] += 1
+
+            # 🔁 recurse
+            if node.get("child"):
+                await traverse(node["child"], node["heading"])
+
+    # -------------------------
+    # STEP 5 — run traversal
+    # -------------------------
+    await traverse(structure)
+
+    return structure
+
+async def bse_li_inject_values_into_hierarchy(structure, values_json):
+
+    # -------------------------
+    # STEP 1 — build lookup (heading → queue of values)
+    # -------------------------
+    value_lookup = defaultdict(deque)
+
+    for item in values_json:
+        if item.get("heading"):
+            key = await normalize(item["heading"])
+            value_lookup[key].append(item.get("value"))
+
+    # -------------------------
+    # STEP 2 — normalize parent-child map
+    # -------------------------
+    normalized_map = {}
+    for parent, children in PARENT_CHILD_MAP_GI.items():
+        p_norm = await normalize(parent)
+        normalized_map[p_norm] = set([await normalize(c) for c in children])
+
+    # -------------------------
+    # STEP 3 — track index per (parent, child)
+    # -------------------------
+    usage_counter = defaultdict(int)
+
+    # -------------------------
+    # STEP 4 — recursive traversal
+    # -------------------------
+    async def traverse(nodes, parent=None):
+        parent_key = await normalize(parent) if parent else None
+
+        for node in nodes:
+            child_key = await normalize(node["heading"])
+
+            # unique key for duplicate tracking
+            unique_key = (parent_key, child_key)
+
+            # ✅ STRICT mapping check
+            if parent_key in normalized_map:
+                if child_key in normalized_map[parent_key]:
+
+                    if value_lookup[child_key]:
+                        index = usage_counter[unique_key]
+
+                        # assign sequential value safely
+                        try:
+                            node["value"] = value_lookup[child_key][index]
+                        except IndexError:
+                            node["value"] = None
+
+                        usage_counter[unique_key] += 1
+
+            # 🔁 recurse
+            if node.get("child"):
+                await traverse(node["child"], node["heading"])
+
+    # -------------------------
+    # STEP 5 — run traversal
+    # -------------------------
+    await traverse(structure)
+
+    return structure
+
+# async def gi_build_hierarchy(flat_data, parent_child_map):
+#     import json
+#     from collections import defaultdict
+#
+#     if isinstance(flat_data, str):
+#         flat_data = json.loads(flat_data)
+#
+#     # -------------------------
+#     # STEP 1 — create parent containers
+#     # -------------------------
+#     parent_nodes = {}
+#     for parent in parent_child_map.keys():
+#         p_key = await normalize(parent)
+#         parent_nodes[p_key] = {
+#             "heading": parent.title(),
+#             "value": None,
+#             "child": []
+#         }
+#
+#     # -------------------------
+#     # STEP 2 — build child → MULTIPLE parents lookup
+#     # -------------------------
+#     child_to_parents = defaultdict(list)
+#
+#     for parent, children in parent_child_map.items():
+#         p_key = await normalize(parent)
+#         for child in children:
+#             c_key = await normalize(child)
+#             child_to_parents[c_key].append(p_key)
+#
+#     # -------------------------
+#     # STEP 3 — insert nested parents
+#     # -------------------------
+#     for parent, children in parent_child_map.items():
+#         parent_key = await normalize(parent)
+#
+#         for child in children:
+#             child_key = await normalize(child)
+#
+#             if child_key == parent_key:
+#                 continue
+#
+#             if child_key in parent_nodes:
+#                 parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+#
+#     # -------------------------
+#     # STEP 4 — SECTION-AWARE parsing (🔥 MAIN FIX)
+#     # -------------------------
+#     current_section = None
+#
+#     for row in flat_data:
+#         if not isinstance(row, dict):
+#             continue
+#
+#         heading_raw = row.get("heading")
+#         if not heading_raw:
+#             continue
+#
+#         heading_raw = heading_raw.strip()
+#         heading = await normalize(heading_raw)
+#         value = row.get("value")
+#
+#         # ✅ detect section (parent)
+#         if heading in parent_nodes:
+#             current_section = heading
+#             continue
+#
+#         # skip if no active section
+#         if not current_section:
+#             continue
+#
+#         # skip parent rows with no value
+#         if heading in parent_nodes and value is None:
+#             continue
+#
+#         # ✅ ONLY attach to CURRENT SECTION (IMPORTANT FIX)
+#         if heading in child_to_parents:
+#             if current_section in child_to_parents[heading]:
+#
+#                 node = {
+#                     "heading": heading,
+#                     "value": value,
+#                     "child": []
+#                 }
+#
+#                 parent_nodes[current_section]["child"].append(node)
+#
+#     # -------------------------
+#     # STEP 5 — find root nodes
+#     # -------------------------
+#     all_children = set(child_to_parents.keys())
+#
+#     roots = []
+#     for parent in parent_child_map:
+#         p_key = await normalize(parent)
+#         if p_key not in all_children:
+#             roots.append(parent_nodes[p_key])
+#
+#     return roots
+
+async def gi_build_hierarchy(flat_data, parent_child_map):
+    import json
+    from collections import defaultdict
+
+    if isinstance(flat_data, str):
+        flat_data = json.loads(flat_data)
+
+    # -------------------------
+    # STEP 1 — create parent containers
+    # -------------------------
+    parent_nodes = {}
+    for parent in parent_child_map.keys():
+        p_key = await normalize(parent)
+        parent_nodes[p_key] = {
+            "heading": parent.title(),
+            "value": None,
+            "child": []
+        }
+
+    # -------------------------
+    # STEP 2 — build child → MULTIPLE parents lookup
+    # -------------------------
+    child_to_parents = defaultdict(list)
+
+    for parent, children in parent_child_map.items():
+        p_key = await normalize(parent)
+        for child in children:
+            c_key = await normalize(child)
+            child_to_parents[c_key].append(p_key)
+
+    # -------------------------
+    # STEP 3 — insert nested parents
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        parent_key = await normalize(parent)
+
+        for child in children:
+            child_key = await normalize(child)
+
+            if child_key == parent_key:
+                continue
+
+            if child_key in parent_nodes:
+                parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+
+    # -------------------------
+    # STEP 4 — AUTO-DETECT SECTIONS
+    # -------------------------
+    SECTION_KEYS = set()
+    for parent, children in parent_child_map.items():
+        if children:
+            SECTION_KEYS.add(await normalize(parent))
+
+    current_section = None
+
+    # 🔥 track inserted children per section
+    section_child_tracker = defaultdict(set)
+
+    # -------------------------
+    # STEP 5 — PROCESS FLAT DATA
+    # -------------------------
+    for row in flat_data:
+        if not isinstance(row, dict):
+            continue
+
+        heading_raw = row.get("heading")
+        if not heading_raw:
+            continue
+
+        heading = await normalize(heading_raw.strip())
+        value = row.get("value")
+
+        # detect section
+        if heading in SECTION_KEYS:
+            current_section = heading
+            continue
+
+        # standalone parent
+        if heading in parent_nodes:
+            parent_nodes[heading]["value"] = value
+            continue
+
+        if not current_section:
+            continue
+
+        # attach valid child
+        if heading in child_to_parents:
+            if current_section in child_to_parents[heading]:
+
+                node = {
+                    "heading": heading,
+                    "value": value,
+                    "child": []
+                }
+
+                parent_nodes[current_section]["child"].append(node)
+
+                # track this child
+                section_child_tracker[current_section].add(heading)
+
+    # -------------------------
+    # STEP 6 — ADD MISSING CHILDREN (🔥 MAIN FIX)
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        p_key = await normalize(parent)
+
+        for child in children:
+            c_key = await normalize(child)
+
+            # skip nested parent case
+            if c_key in parent_nodes:
+                continue
+
+            # if not already added → add with None
+            if c_key not in section_child_tracker[p_key]:
+                parent_nodes[p_key]["child"].append({
+                    "heading": c_key,
+                    "value": None,
+                    "child": []
+                })
+
+    # -------------------------
+    # STEP 7 — find root nodes
+    # -------------------------
+    all_children = set(child_to_parents.keys())
+
+    roots = []
+    for parent in parent_child_map:
+        p_key = await normalize(parent)
+        if p_key not in all_children:
+            roots.append(parent_nodes[p_key])
+
+    return roots
 
 async def build_hierarchy(flat_data, parent_child_map):
     import json
@@ -430,10 +885,120 @@ async def build_hierarchy(flat_data, parent_child_map):
     return roots
 
 
-async def safe_build(data):
+async def bse_build_hierarchy(flat_data, parent_child_map):
+    import json
+
+    if isinstance(flat_data, str):
+        flat_data = json.loads(flat_data)
+
+    # -------------------------
+    # STEP 1 — create parent containers
+    # -------------------------
+    parent_nodes = {
+        await normalize(parent): {
+            "heading": parent.title(),
+            "value": None,
+            "child": []
+        }
+        for parent in parent_child_map.keys()
+    }
+
+    # -------------------------
+    # STEP 2 — build child → parent lookup
+    # -------------------------
+    child_to_parent = {
+        await normalize(child): await normalize(parent)
+        for parent, childs in parent_child_map.items()
+        for child in childs
+    }
+
+    # -------------------------
+    # STEP 3 — insert nested parents first
+    # (IMPORTANT)
+    # -------------------------
+    for parent, children in parent_child_map.items():
+        parent_key = await normalize(parent)
+
+        for child in children:
+            child_key = await normalize(child)
+
+            # IMPORTANT: prevent self-reference loop
+            if child_key == parent_key:
+                continue
+
+            if child_key in parent_nodes:
+                parent_nodes[parent_key]["child"].append(parent_nodes[child_key])
+
+    # -------------------------
+    # STEP 4 — now attach flat rows in order
+    # -------------------------
+    for row in flat_data:
+        if not isinstance(row, dict):
+            continue
+        if row.get("heading") is None:
+            continue
+        heading_raw = row.get("heading", "").strip()
+        heading = await normalize(heading_raw)
+        value = row.get("value")
+
+        if heading in parent_nodes:
+            if value is None:
+                continue
+
+        node = {
+            "heading": heading,
+            "value": value,
+            "child": []
+        }
+        if heading in child_to_parent:
+            parent_key = child_to_parent[heading]
+            parent_nodes[parent_key]["child"].append(node)
+
+    # -------------------------
+    # STEP 5 — find real roots
+    # -------------------------
+    all_children = set(child_to_parent.keys())
+
+    roots = []
+    for parent in parent_child_map:
+        if await normalize(parent) not in all_children:
+            roots.append(parent_nodes[await normalize(parent)])
+
+    return roots
+
+
+async def safe_build(data, file_url=None):
     import json
     if isinstance(data, str):
         data = json.loads(data)
+
+    if file_url and "NBFC_INDAS" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_NBFC_INDAS)
+    if file_url and "_GI_" in file_url:
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_GI)
+    if file_url and "_LI_" in file_url:
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_LI)
+    if file_url and "_INDAS_" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_INDAS)
+    if file_url and "_BANKING_" in file_url:
+        return await build_hierarchy(data, PARENT_CHILD_MAP_BANKING)
+    return await build_hierarchy(data, PARENT_CHILD_MAP)
+
+async def bse_safe_build(data, file_url=None, bse_format=None):
+    import json
+    if isinstance(data, str):
+        data = json.loads(data)
+
+    if bse_format == "NBFC":
+        return await build_hierarchy(data, PARENT_CHILD_MAP_BSE_NBFC)
+    if bse_format == "General Insurance":
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_BSE_GI)
+    if bse_format == "Life Insurance":
+        return await gi_build_hierarchy(data, PARENT_CHILD_MAP_BSE_LI)
+    if file_url and "_Ind_As_" in file_url:
+        return await bse_build_hierarchy(data, PARENT_CHILD_MAP_INDAS_BSE)
+    if bse_format == "Banking":
+        return await bse_build_hierarchy(data, PARENT_CHILD_MAP_BANKING_BSE)
     return await build_hierarchy(data, PARENT_CHILD_MAP)
 
 async def parse_numeric(text):
@@ -450,6 +1015,145 @@ async def parse_numeric(text):
         return -value if is_negative else value
     except ValueError:
         return None
+async def extract_text(tag):
+    if tag.find("b"):
+        return tag.find("b").get_text(strip=True)
+    return tag.get_text(" ", strip=True)
+
+async def get_current_valuess(ths):
+    if not ths:
+        return None
+
+    # ❌ Skip header row
+    first_text = ths[0].get_text(strip=True).lower()
+    if "particulars" in first_text:
+        return None
+
+    # 🔍 Extract all numeric values from all <th>
+    values = []
+
+    for th in ths:
+        # Prefer <b> tags (NSE pattern)
+        bs = th.find_all("b")
+        for b in bs:
+            text = b.get_text(strip=True)
+            if re.search(r"\d", text):
+                values.append(text)
+
+        # fallback if no <b>
+        if not bs:
+            text = th.get_text(" ", strip=True)
+            if re.search(r"\d", text):
+                values.append(text)
+
+    # ❗ Remove serial number (like 6, 10, 17)
+    if values and len(values[0]) <= 3:
+        values = values[1:]
+
+    # ✅ Return ONLY current value
+    return values[0] if values else None
+
+
+async def extract_heading(tag):
+    """Extract clean heading text"""
+    if not tag:
+        return None
+    heading = tag.get_text(" ", strip=True)
+    return heading
+
+async def extract_heading_one(tag):
+    """Extract clean heading text"""
+    if tag:
+        ths = tag.find_all("th")
+        if ths:
+            for b in ths[0].find("b"):
+                return b.get_text(strip=True)
+        return None
+
+    return None
+
+async def extract_numeric_values(tag):
+    """Extract all numeric values from a tag (handles nested/broken HTML)"""
+    if not tag:
+        return []
+
+    values = []
+
+    # First try: <b> tags (NSE pattern)
+    for b in tag.find_all("b"):
+        text = b.get_text(strip=True)
+        if re.search(r"\d", text):
+            values.append(text)
+
+    # Fallback: direct text (if no <b>)
+    if not values:
+        text = tag.get_text(" ", strip=True)
+        if re.search(r"\d", text):
+            values.append(text)
+
+    return values
+
+
+async def parse_row_dynamic(ths):
+    """Fully dynamic parser for NSE table rows"""
+
+    if not ths:
+        return None
+    # ❌ Skip header rows
+    first_text = ths[0].get_text(strip=True).lower()
+    # if "particulars" in first_text:
+    #     return None
+    print(first_text, "-------------7777", ths)
+    data = {
+        "heading": None,
+        "current_value": None,
+        "previous_value": None,
+    }
+
+    # ✅ Step 1: Extract heading (usually 2nd th)
+    if len(ths) >= 2:
+        data["heading"] = await extract_heading(ths[1])
+    elif len(ths) == 1:
+        data["heading"] = await extract_heading_one(ths[0])
+
+    # ✅ Step 2: Extract all numeric values from ALL ths
+    all_values = []
+    for th in ths:
+        vals = await extract_numeric_values(th)
+        all_values.extend(vals)
+
+    # ❗ Remove serial number (like 6, 10, 17)
+    if all_values and len(all_values[0]) <= 3:
+        all_values = all_values[1:]
+
+    # ✅ Assign values dynamically
+    if len(all_values) >= 1:
+        data["current_value"] = all_values[0]
+
+    if len(all_values) >= 2:
+        data["previous_value"] = all_values[1]
+
+    return data
+
+async def get_heading_from_row(row):
+    texts = []
+
+    # get all text pieces
+    for t in row.stripped_strings:
+        # skip pure numbers
+        if re.fullmatch(r"\d+(\.\d+)?", t):
+            continue
+        if re.fullmatch(r"\([a-zA-ZivxIVX]+\)", t):
+            continue
+
+        texts.append(t)
+
+    # remove first number if it's serial (like 16)
+    if texts and texts[0].isdigit():
+        texts = texts[1:]
+
+    # join remaining → heading
+    return " ".join(texts) if texts else None
 
 async def fetch_th_tr_from_table(rows_data):
     final_data = []
@@ -459,25 +1163,229 @@ async def fetch_th_tr_from_table(rows_data):
         if not tds and not ths:
             continue
 
-        ths = row.find_all("th")
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        if ths:
+            if len(ths) > 1:
+                th = ths[1]
+                for td in th.find_all("td"):
+                    td.extract()
+                section_name = th.get_text(strip=True)
+            else:
+                section_name = None
+            # section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+            f_json['heading'] = section_name
+            if tds:
+                if len(tds) == 3:
+                    section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+                    f_json['heading'] = section_name
+                    text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                elif len(tds) == 2 and len(ths) == 2:
+                    section_name = await extract_text(ths[1]) if len(ths) == 2 else None
+                    f_json['heading'] = section_name
+                    text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+                    value = await parse_numeric(text)
+                elif len(tds) == 2 and len(ths) == 1:
+                    section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                    f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                    text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+
+                    value = await parse_numeric(text)
+
+                else:
+                    text = await extract_text(tds[0]) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                f_json['value'] = value
+            else:
+                j_value = await parse_row_dynamic(ths)
+                if j_value:
+                    j_heading = j_value.get("heading")
+                    if j_heading:
+                        result = j_heading.split()
+                        if result:
+                            remove_vals = {j_value.get('current_value'), j_value.get('previous_value')}
+
+                            data = [x for x in result if x not in remove_vals]
+                            heading = " ".join(data)
+                        if heading:
+                            f_json['heading'] = heading
+                    value = await parse_numeric(j_value.get("current_value"))
+                    f_json['value'] = value
+
+            final_data.append(f_json)
+    return final_data
+
+
+async def fetch_th_tr_from_gi_table(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        if tds:
+            if len(tds) == 3:
+                section_name = await extract_text(tds[1]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+            elif len(tds) == 1:
+                section_name = await extract_text(tds[0]) if len(tds) == 1 else None
+                f_json['heading'] = section_name
+
+            elif len(tds) == 4:
+                section_name = await extract_text(tds[1]) if len(tds) == 4 else None
+                f_json['heading'] = section_name
+                text = tds[2].get_text(strip=True) if len(tds) == 4 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+            elif len(tds) == 2 and len(ths) == 1:
+                section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+
+                value = await parse_numeric(text)
+                f_json['value'] = value
+
+            final_data.append(f_json)
+    return final_data
+
+async def fetch_th_tr_from_li_table(rows_data):
+    final_data = []
+    previous_raw = None
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        titles = {"Gross NPAs" : "Shareholders Gross NPAs",
+                  "Net NPAs": "Shareholders Net NPAs",
+                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+                  "Without unrealised gains":  "Shareholders Without unrealised gains",
+                  "With unrealised gains": "Shareholders With unrealised gains"}
+        if tds:
+            if len(ths) == 2 and len(tds) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name) or section_name
+                text = tds[0].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 1 and len(tds) == 3:
+                section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 2 and len(tds) == 1:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+        else:
+            if len(ths) == 3:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 4:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                text = ths[2].get_text(strip=True) if len(ths) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 1:
+                section_name = await extract_text(ths[0]) if len(ths) > 0 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+
+        final_data.append(f_json)
+    return final_data
+
+async def bse_fetch_th_tr_from_li_table(rows_data):
+    final_data = []
+    previous_raw = None
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
         tds = row.find_all("td")
         f_json = {
             "heading": None,
             "value": None,
         }
-        if ths:
-            section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+        titles = {"Gross NPAs": "Shareholders Gross NPAs",
+                  "Net NPAs": "Shareholders Net NPAs",
+                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+                  "Without unrealised gains": "Shareholders Without unrealised gains",
+                  "With unrealised gains": "Shareholders With unrealised gains"}
+        if tds:
+            section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
             f_json['heading'] = section_name
+            if section_name == "NPA ratios: (for shareholder's fund)":
+                previous_raw = section_name
             if tds:
-                if len(tds) == 3:
-                    section_name = tds[0].get_text(strip=True) if len(tds) > 1 else None
-                    f_json['heading'] = section_name
-                    text = tds[1].get_text(strip=True) if len(tds) > 1 else None
-                    value = await parse_numeric(text)
-                else:
-                    text = tds[0].get_text(strip=True) if len(tds) > 1 else None
-                    value = await parse_numeric(text)
-                f_json['value'] = value
+                value = None
+                if len(tds) == 4:
+                    section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    if previous_raw and previous_raw == "NPA ratios: (for shareholder's fund)" and titles.get(
+                            section_name):
+                        f_json["heading"] = titles.get(section_name) or section_name
+                    value_tag = tds[2].find("ix:nonfraction")
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
             final_data.append(f_json)
     return final_data
 
@@ -503,12 +1411,30 @@ async def fetch_bse_th_tr_from_table(rows_data):
                     section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
                     f_json['heading'] = section_name
                     value_tag = tds[2].find("ix:nonfraction")
-                    text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
-                    value = await parse_numeric(text)
-                f_json['value'] = value
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
             final_data.append(f_json)
     return final_data
 
+
+async def extract_table_as_dict(soup, table):
+    data = {}
+
+    for row in table.find_all("tr"):
+        cols = row.find_all(["td", "th"])
+
+        if len(cols) >= 2:
+            key = cols[0].get_text(strip=True)
+            value = cols[1].get_text(strip=True)
+
+            data[key] = value
+
+    return data
 
 async def fetch_integrated_filing_financials_data_from_nse(url):
     try:
@@ -525,10 +1451,6 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
 
         # first hit homepage to get cookies
         session.get("https://www.nseindia.com", headers=headers)
-
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_BANKING_135572_17012026162609_iXBRL_WEB.html"
-        # URL = "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_INDAS_134548_12012026184316_iXBRL_WEB.html"
 
         path = url.split("nsearchives.nseindia.com")[-1]
 
@@ -556,43 +1478,169 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
         resp = session.get(url, headers=headers)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
-            tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
-            table = None
-            if tables:
-                for table1 in tables[:1]:
-                    table = table1
-            else:
+            heading = soup.find("h3", string=lambda x: x and "General information" in x)
+            gITable = heading.find_next("table")
+            table_data = await extract_table_as_dict(soup, gITable)
+            value = table_data.get("Level of rounding used in financial results", "Crores")
+
+            if "_GI_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                total_rows = []
+                if tables and len(tables) > 1:
+                    for table1 in tables[:4]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[:5]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
+                final_data = await fetch_th_tr_from_gi_table(total_rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await gi_inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "GI"
+            elif "_LI_" in url:
+                total_rows = []
                 tables = soup.find_all("table")
-                for table1 in tables[1:2]:
+                for table1 in tables[3:5]:
                     table = table1
-            rows = [
-                tr for tr in table.find_all("tr")
-                if tr.get_text(strip=True)
-            ]
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    total_rows.extend(rows)
+                final_data = await fetch_th_tr_from_li_table(total_rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await li_inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "LI"
+            elif "_INDAS_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
 
-            final_data = await fetch_th_tr_from_table(rows)
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "INDAS"
+            elif "_BANKING_" in url:
+                other_tables = soup.find_all("table", class_="customTablewidth3Col")
+                table = None
+                if other_tables:
+                    for table1 in other_tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
 
-            structured = await safe_build(final_data)
-            structured_with_values = await inject_values_into_hierarchy(
-                structured,
-                final_data
-            )
-            return structured_with_values
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "BANKING"
+            elif "_NBFC_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
 
-        return structured_with_values
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "NBFC"
+            else:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                other_tables = soup.find_all("table", class_="customTablewidth3Col")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                elif other_tables:
+                    for table1 in other_tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "Other"
+
+        return structured_with_values, None, None
     except Exception as e:
-        return []
+        return [], None, None
 
 
-async def build_node(item, node_map, quarter_index):
+async def build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
     value = item.get("value")
     children = item.get("child", [])
-
     # convert lakhs → crores
-    if isinstance(value, (int, float)):
-        value = value / 100
-
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            # value = round(value / 100, 2)
+            if value.is_integer() and value not in [1,2,3,4,5,6,7,8,9,10]:
+                value = round(value / 100, 2)
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            # value = round(value / 1_00_00_000, 2)
+            if value.is_integer() and value not in [1,2,3,4,5,6,7,8,9,10]:
+                value = value / 1_00_00_000
 
     if heading not in node_map:
         node_map[heading] = {
@@ -615,7 +1663,7 @@ async def build_node(item, node_map, quarter_index):
 
     # process children recursively
     for child in children:
-        await build_node(child, node["children"], quarter_index)
+        await build_node(child, node["children"], quarter_index, amount_type)
 
 async def bse_build_node(item, node_map, quarter_index, amount_type):
     heading = item.get("heading")
@@ -624,10 +1672,14 @@ async def bse_build_node(item, node_map, quarter_index, amount_type):
 
     if amount_type == "Millions":
         if isinstance(value, (int, float)):
-            value = round(value / 10)
-    elif amount_type == "Lakhs":
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = round(value / 10, 2)
+
+    if amount_type == "Lakhs":
         if isinstance(value, (int, float)):
-            value = round(value / 100, 2)
+            # value = round(value / 100, 2)
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = round(value / 100, 2)
     elif amount_type == "Crores":
         value = value
 
@@ -665,7 +1717,7 @@ async def convert_to_quarterly_format(response_list):
         headers.append(meta.get("date"))
 
         for item in quarter[:-1]:
-            await build_node(item, root_map, quarter_index)
+            await build_node(item, root_map, quarter_index, meta.get("amount_type"))
 
     # convert children dict → list
     def finalize(node):
@@ -680,6 +1732,354 @@ async def convert_to_quarterly_format(response_list):
     return {
         "headers": headers,
         "rows": rows
+    }
+
+async def bse_gl_convert_to_quarterly_format(response_list):
+    headers = []
+    root_map = {}
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for item in quarter[:-1]:
+            await bse_build_node(item, root_map, quarter_index, meta.get("amount_type"))
+
+    # convert children dict → list
+    def finalize(node):
+        if node["children"]:
+            node["children"] = [finalize(child) for child in node["children"].values()]
+        else:
+            node.pop("children", None)
+        return node
+
+    rows = [finalize(node) for node in root_map.values()]
+
+    return {
+        "headers": headers,
+        "rows": rows
+    }
+
+async def li_build_node(item, quarter_index, amount_type):
+    value = item.get("value")
+    # -------------------------
+    # APPLY AMOUNT CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 100
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 1_00_00_000
+
+    node = {
+        "key": await normalize(item["heading"]),
+        "label": item["heading"],
+        "values": [None] * (quarter_index + 1),
+        "type": "group" if item.get("child") else "single"
+    }
+
+    # set value
+    if item.get("value") is not None:
+        node["values"][quarter_index] = value
+
+    if item.get("child"):
+        node["children"] = [
+            await li_build_node(child, quarter_index, amount_type)
+            for child in item["child"]
+        ]
+
+    return node
+
+async def bse_banking_build_node(item, quarter_index, amount_type):
+    value = item.get("value")
+    # -------------------------
+    # APPLY AMOUNT CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 100
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if value.is_integer() and value not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                value = value / 1_00_00_000
+
+    node = {
+        "key": await normalize(item["heading"]),
+        "label": item["heading"],
+        "values": [None] * (quarter_index + 1),
+        "type": "group" if item.get("child") else "single"
+    }
+
+    # set value
+    if item.get("value") is not None:
+        node["values"][quarter_index] = value
+
+    if item.get("child"):
+        node["children"] = [
+            await bse_banking_build_node(child, quarter_index, amount_type)
+            for child in item["child"]
+        ]
+
+    return node
+
+
+async def li_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
+
+    # expand values list
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    value = new_node.get("value")
+
+    # -------------------------
+    # APPLY SAME CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
+    # assign value
+    if value is not None:
+        existing_node["values"][quarter_index] = value
+
+    # handle children (IMPORTANT: index-based, not key-based)
+    if "children" in existing_node and new_node.get("child"):
+
+        for i, child in enumerate(new_node["child"]):
+
+            if i < len(existing_node["children"]):
+                await li_inject_into_existing(
+                    existing_node["children"][i],
+                    child,
+                    quarter_index, amount_type
+                )
+
+async def bse_banking_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
+
+    # expand values list
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    value = new_node.get("value")
+
+    # -------------------------
+    # APPLY SAME CONVERSION
+    # -------------------------
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
+    # assign value
+    if value is not None:
+        existing_node["values"][quarter_index] = value
+
+    # handle children (IMPORTANT: index-based, not key-based)
+    if "children" in existing_node and new_node.get("child"):
+
+        for i, child in enumerate(new_node["child"]):
+
+            if i < len(existing_node["children"]):
+                await bse_banking_inject_into_existing(
+                    existing_node["children"][i],
+                    child,
+                    quarter_index, amount_type
+                )
+
+async def bse_nbfc_inject_into_existing(existing_node, new_node, quarter_index, amount_type):
+
+    # expand values
+    while len(existing_node["values"]) <= quarter_index:
+        existing_node["values"].append(None)
+
+    value = new_node.get("value")
+
+    if amount_type == "Lakhs":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 100
+
+    elif amount_type == "Crores":
+        if isinstance(value, (int, float)):
+            if float(value).is_integer() and value not in range(1, 11):
+                value = value / 1_00_00_000
+
+    if value is not None:
+        existing_node["values"][quarter_index] = value
+
+    # =========================
+    # ✅ FIX: KEY-BASED CHILD MATCHING
+    # =========================
+    if "children" in existing_node and new_node.get("child"):
+
+        # build map from existing children
+        child_map = {
+            child["key"]: child
+            for child in existing_node["children"]
+        }
+
+        for child in new_node["child"]:
+
+            child_key = await normalize(child["heading"])
+            existing_child = child_map.get(child_key)
+
+            if existing_child:
+                await bse_nbfc_inject_into_existing(
+                    existing_child,
+                    child,
+                    quarter_index,
+                    amount_type
+                )
+
+async def get_format_type(response_list):
+    if not response_list or not response_list[0]:
+        return None  # or "other" if you prefer
+    return response_list[0][-1].get("format")
+
+async def decide_quarterly_format(response_list):
+    frmt = await get_format_type(response_list)
+    result = {}
+    if frmt in ["GI", "Other", "INDAS", "BANKING", "NBFC"]:
+        result = await convert_to_quarterly_format(response_list)
+    elif frmt in ["LI"]:
+        result = await li_convert_to_quarterly_format(response_list)
+    return result
+
+async def bse_decide_quarterly_format(response_list):
+    frmt = await get_format_type(response_list)
+    result = {}
+    if frmt in ["Other", "INDAS"]:
+        result = await bse_convert_to_quarterly_format(response_list)
+    elif frmt in ["BANKING"]:
+        result = await bse_banking_convert_to_quarterly_format(response_list)
+    elif frmt in ["NBFC"]:
+        result = await bse_nbfc_convert_to_quarterly_format(response_list)
+    elif frmt in ["General Insurance"]:
+        result = await bse_gl_convert_to_quarterly_format(response_list)
+    elif frmt in ["Life Insurance"]:
+        result = await li_convert_to_quarterly_format(response_list)
+    return result
+
+async def li_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            # first quarter → build structure
+            if quarter_index == 0:
+                node = await li_build_node(item, quarter_index, meta.get("amount_type"))
+                root_nodes.append(node)
+
+            # next quarters → inject values
+            else:
+                await li_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
+    }
+
+async def bse_banking_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            # first quarter → build structure
+            if quarter_index == 0:
+                node = await bse_banking_build_node(item, quarter_index, meta.get("amount_type"))
+                root_nodes.append(node)
+
+            # next quarters → inject values
+            else:
+                await bse_banking_inject_into_existing(root_nodes[i], item, quarter_index, meta.get("amount_type"))
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
+    }
+
+async def fill_missing_values(node, quarter_index):
+    # If this quarter value is missing → append None
+    if len(node["values"]) <= quarter_index:
+        node["values"].append(None)
+
+    # Do same for children
+    for child in node.get("children", []):
+        await fill_missing_values(child, quarter_index)
+
+async def bse_nbfc_convert_to_quarterly_format(response_list):
+    headers = []
+    root_nodes = []
+    key_map = {}   # ✅ NEW
+
+    for quarter_index, quarter in enumerate(response_list):
+
+        meta = quarter[-1]
+        headers.append(meta.get("date"))
+
+        for i, item in enumerate(quarter[:-1]):
+
+            key = await normalize(item["heading"])   # ✅ NEW
+
+            # -------------------------
+            # FIRST QUARTER → BUILD
+            # -------------------------
+            if quarter_index == 0:
+                node = await bse_banking_build_node(
+                    item, quarter_index, meta.get("amount_type")
+                )
+                root_nodes.append(node)
+
+                key_map[node["key"]] = node   # ✅ NEW
+
+            # -------------------------
+            # NEXT QUARTERS → FIXED INJECTION
+            # -------------------------
+            else:
+                existing_node = key_map.get(key)   # ✅ FIX
+
+                if existing_node:
+                    await bse_nbfc_inject_into_existing(
+                        existing_node,
+                        item,
+                        quarter_index,
+                        meta.get("amount_type")
+                    )
+
+        for node in root_nodes:
+            await fill_missing_values(node, quarter_index)
+
+    return {
+        "headers": headers,
+        "rows": root_nodes
     }
 
 async def bse_convert_to_quarterly_format(response_list):
@@ -763,26 +2163,104 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
-            table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x.lower())
+            result_type = None
+            if heading:
+                text = heading.get_text(strip=True)
+                result_type = text.split("-")[-1].strip()
+            if "_Ind_As_" in url:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
 
-            if table:
-                rows = [
-                    tr for tr in table.find_all("tr")
-                    if tr.get_text(strip=True)
-                ]
-                final_data = await fetch_bse_th_tr_from_table(rows)
-                structured = await safe_build(final_data)
-                structured_with_values = await inject_values_into_hierarchy(
-                    structured,
-                    final_data
-                )
-                return structured_with_values, amount_type
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, url)
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "INDAS"
+            if "Banking" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
 
-            return [], None
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="Banking")
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "BANKING"
 
-        return structured_with_values
+            if "NBFC" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="NBFC")
+                    structured_with_values = await inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "NBFC"
+
+            if "General Insurance".lower() in result_type:
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="General Insurance")
+                    structured_with_values = await bse_gi_inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "General Insurance"
+
+            if "Life Insurance".lower() in result_type:
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    start_index = None
+                    for i, tr in enumerate(rows):
+                        text = tr.get_text(" ", strip=True).lower()
+                        if "shareholder's account" in text:
+                            start_index = i
+                            break
+
+                    if start_index is not None:
+                        rows = rows[start_index + 1:]
+                    final_data = await bse_fetch_th_tr_from_li_table(rows)
+                    structured = await bse_safe_build(final_data, bse_format="Life Insurance")
+                    structured_with_values = await bse_li_inject_values_into_hierarchy(
+                        structured,
+                        final_data
+                    )
+                    return structured_with_values, amount_type, "Life Insurance"
+
+            return [], None, None
+
+        return structured_with_values, None, None
     except Exception as e:
-        return [], None
+        return [], None, None
 
 def get_today_file():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -846,7 +2324,8 @@ async def save_quarterly_result_processed_symbol(symbols, key):
     data = {
         "processing": [],
         "unsaved": [],
-        "error": []
+        "error": [],
+        "processed_symbols": []
     }
 
     if os.path.exists(file):
@@ -857,6 +2336,10 @@ async def save_quarterly_result_processed_symbol(symbols, key):
                     data = json.loads(content)
         except json.JSONDecodeError:
             pass
+
+    if key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
 
     if key == "processing":
         data["processing"].extend(symbols)
@@ -1001,3 +2484,63 @@ async def update_nse_bse_price_data_save_processed_symbol(symbols, key, file_nam
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
+
+async def update_nse_bse_newly_listed_stock_save_processed_symbol(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
+    file_path = get_custom_today_file(file_name)
+    skipped_symbols = {}
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            processed_symbols = set(data.get("processed_symbols", []))
+
+            print(f"{len(skipped_symbols)} skipped from json")
+            return processed_symbols
+
+        except Exception as e:
+            return {}
+    return {}
