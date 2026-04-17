@@ -698,6 +698,7 @@ YEAR_OR_MONTY_TO_DAYS_MAP = {
   "20Y": 20,
   "25Y": 25,
   "30Y": 30,
+  "3Y": 3
 }
 
 PARENT_CHILD_MAP = {

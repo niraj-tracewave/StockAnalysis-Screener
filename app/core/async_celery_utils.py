@@ -11,7 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, QuarterlyResultDateset, \
     ResultFormatEnum
 from app.core.logging_config import setup_logging
-from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, fetch_bse_data
+from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, \
+    fetch_bse_data, fetch_bse_exact_symbol_data_from_json
 from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_covered_symbol_json, \
     load_processed_symbols, save_processed_symbol, fetch_integrated_filing_financials_data_from_nse, \
     convert_to_quarterly_format, fetch_symbols_from_covered_symbol_json_for_quarterly_result, \
@@ -911,32 +912,38 @@ async def update_nse_bse_scrip_code_async():
     )
 
     result = db.execute(stmt)
-    companies = result.scalars().all()
+    # companies = result.scalars().all()
     processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
     new_process_symbol = []
-    unprocessed_companies = [
-        c for c in companies if c.nse_symbol not in processed_symbols
-    ][:25]
+    # unprocessed_companies = [
+    #     c for c in companies if c.nse_symbol not in processed_symbols
+    # ][:25]
+    unprocessed_companies = []
+    for c in result.scalars():
+        if c.nse_symbol not in processed_symbols:
+            unprocessed_companies.append(c)
+            if len(unprocessed_companies) == 25:
+                break
     started_symbols = [c.nse_symbol for c in unprocessed_companies]
     await update_nse_bse_scrip_code_save_processed_symbol(started_symbols, "current_processed_symbols")
     for company in unprocessed_companies:
         try:
             print(f"\nProcessing company: {company.id} | {company.name}")
             nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-            bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+            bse_security_code = await fetch_bse_exact_symbol_data_from_json(company.nse_symbol)
 
             nse_code = company.nse_code
             bse_code = company.bse_code
-            if nse_company_list and bse_company_list:
+            if nse_company_list and bse_security_code:
                 platform = "NSE, BSE"
                 nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-                bse_code = bse_company_list[0].get("bse_code") if bse_company_list else None
+                bse_code =bse_security_code if bse_security_code else None
             elif nse_company_list:
                 platform = "NSE"
                 nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-            elif bse_company_list:
+            elif bse_security_code:
                 platform = "BSE"
-                bse_code = bse_company_list[0].get("bse_code") if bse_company_list else None
+                bse_code = bse_security_code if bse_security_code else None
 
             company.bse_code = bse_code
             company.nse_code = nse_code
@@ -967,12 +974,18 @@ async def update_nse_bse_stock_information_async():
     file_name = "update_nse_bse_price_data.json"
     error_symbols = []
     result = db.execute(stmt)
-    companies = result.scalars().all()
-    processed_symbols = await update_nse_bse_price_data_load_processed_symbols(file_name)
+    # companies = result.scalars().all()
+    processed_symbols = set(await update_nse_bse_price_data_load_processed_symbols(file_name))
     new_process_symbol = []
-    unprocessed_companies = [
-        c for c in companies if c.nse_symbol not in processed_symbols
-    ][:30]
+    # unprocessed_companies = [
+    #     c for c in result.scalars() if c.nse_symbol not in processed_symbols
+    # ][:30]
+    unprocessed_companies = []
+    for c in result.scalars():
+        if c.nse_symbol not in processed_symbols:
+            unprocessed_companies.append(c)
+            if len(unprocessed_companies) == 30:
+                break
     started_symbols = [c.nse_symbol for c in unprocessed_companies]
     await update_nse_bse_price_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
     for company in unprocessed_companies:
@@ -983,6 +996,7 @@ async def update_nse_bse_stock_information_async():
             low_price = company.details.low_price
             pe_ratio = company.details.pe_ratio
             face_value = company.details.face_value
+            market_cap_cr = company.details.market_cap
             nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
             bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
             if nse_company_list and bse_company_list:
@@ -1001,6 +1015,11 @@ async def update_nse_bse_stock_information_async():
                 low_price = nse_metadata.get('dayLow')
                 pe_ratio = sec_info.get('pdSymbolPe')
                 roe = header_data.get('ROE')
+                total_market_cap = trade_info.get('totalMarketCap')
+                if total_market_cap:
+                    market_cap_cr = round(total_market_cap / 1e7, 2)
+                else:
+                    market_cap_cr = None
             elif nse_company_list:
                 nse_data = await main(company.nse_symbol)
                 symbol_data = nse_data.get('symbolData')
@@ -1013,6 +1032,11 @@ async def update_nse_bse_stock_information_async():
                 high_price = nse_metadata.get('dayHigh')
                 low_price = nse_metadata.get('dayLow')
                 pe_ratio = sec_info.get('pdSymbolPe')
+                total_market_cap = trade_info.get('totalMarketCap')
+                if total_market_cap:
+                    market_cap_cr = round(total_market_cap / 1e7, 2)
+                else:
+                    market_cap_cr = None
             elif bse_company_list:
                 security_code = bse_company_list[0].get("bse_code")
                 bse_data = await main_bse(security_code)
@@ -1030,12 +1054,17 @@ async def update_nse_bse_stock_information_async():
                 low_price = header.get('Low')
                 pe_ratio = header_data.get('PE')
                 roe = header_data.get('ROE')
+                stock_trading = bse_data.get('stockTrading')
+                total_market_cap = stock_trading.get('MktCapFull', None)
+                if total_market_cap:
+                    market_cap_cr = float(total_market_cap)
             company.details.roe = float(roe) if roe and roe != '-' else None
             company.details.current_price = current_price
             company.details.high_price = high_price
             company.details.low_price = low_price
             company.details.pe_ratio = float(pe_ratio) if pe_ratio and pe_ratio != '-' else None
             company.details.face_value = face_value
+            company.details.market_cap = market_cap_cr
             db.commit()
             new_process_symbol.append(company.nse_symbol)
 

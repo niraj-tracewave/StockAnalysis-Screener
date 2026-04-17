@@ -83,3 +83,7 @@ async def search_company(request: UpdateStockPriceSchema,
                           db: Session = Depends(get_db),
                           ):
     return await CompanyStockFetchService.update_stock_price(request, db)
+
+@router.get("/download-scripcode-file/", status_code=status.HTTP_200_OK)
+async def search_company():
+    return await CompanyStockFetchService.download_scrip_master_file()

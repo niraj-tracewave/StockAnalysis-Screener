@@ -1,5 +1,8 @@
 import asyncio
 
+from sqlalchemy import select
+
+from app.apis.models.stock_data import CompanyStock
 from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async, \
     fetch_30y_stock_chart_data_async, fetch_and_update_30y_stock_chart_data_async, \
     fetch_stock_quarterly_result_data_async, update_nse_bse_scrip_code_async, update_nse_bse_stock_information_async
@@ -49,6 +52,38 @@ def store_company_data(nse_list : list, bse_list : list):
 
         db.execute(stmt)
         db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+@celery_app.task(
+    name="update_stock_scrip_code",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 5},
+)
+def update_stock_scrip_code(nse_code : int, bse_code : int, search : str):
+    """
+    Background task to store NSE & BSE stock scrip code
+    """
+    db = SessionLocalSync()
+    try:
+
+        stmt = (
+            select(CompanyStock)
+            .where(
+                (CompanyStock.nse_symbol == search)
+            )
+        )
+
+        result = db.execute(stmt)
+        data = result.scalars().first()
+        if data:
+            data.nse_code = nse_code
+            data.bse_code = bse_code
+            db.commit()
 
     except Exception:
         db.rollback()
