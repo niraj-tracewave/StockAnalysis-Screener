@@ -2544,3 +2544,7 @@ async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
         except Exception as e:
             return {}
     return {}
+
+
+async def convert_custom_shareholding_pattern():
+    pass
