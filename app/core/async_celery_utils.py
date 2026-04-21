@@ -21,7 +21,8 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     update_nse_bse_scrip_code_save_processed_symbol, update_nse_bse_price_data_load_processed_symbols, \
     update_nse_bse_price_data_save_processed_symbol, decide_quarterly_format, bse_decide_quarterly_format, \
     update_nse_bse_newly_listed_stock_save_processed_symbol, fetch_newly_listed_stock_symbols_from_covered_symbol_json, \
-    convert_custom_shareholding_pattern
+    save_multiple_shareholding, save_multiple_dii_shareholding, save_multiple_fii_shareholding, \
+    save_multiple_government_shareholding, save_multiple_public_shareholding
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -1367,6 +1368,7 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                 ShareHoldingPeriod,
                 CompanyStock.id == ShareHoldingPeriod.company_id
             )
+            .distinct(CompanyStock.id)
             # .where(QuarterlyResultDateset.company_id.is_(None))
             .options(selectinload(CompanyStock.details))
             .execution_options(yield_per=100)
@@ -1398,31 +1400,39 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                 try:
                     print(f"\nProcessing company: {company.id} | {company.name}")
                     with db.begin_nested():
-                        # db.execute(
-                        #     delete(QuarterlyResultDateset)
-                        #     .where(QuarterlyResultDateset.company_id == company.id)
-                        # )
                         nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
                         bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
                         if nse_company_list and bse_company_list:
                             shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol, "equities")
                             if shareholding_list:
                                 shareholding_data_list = []
-                                for shareholding_obj in shareholding_list[:1]:
-                                    if shareholding_obj.get("desc") == "NEW_1" and  "-" not in shareholding_obj.get("xbrl"):
-                                        shareholding_all_data = await main_nse_fetch_shareholding_data_using_api(shareholding_obj.get("recordId"))
-                                        print(shareholding_all_data)
+                                for shareholding_obj in shareholding_list[1:2]:
+                                    print(shareholding_obj)
+                                    print("-------------------------------------------")
+                                    row = {
+                                        "date": shareholding_obj.get("date"),
+                                        "remarksWeb": shareholding_obj.get("remarksWeb"),
+                                        "revisionRemark": shareholding_obj.get("revisionRemark"),
+                                        "revisionDate": shareholding_obj.get("revisionDate"),
+                                    }
+                                    shareholding_all_data = await main_nse_fetch_shareholding_data_using_api(
+                                        id="popup1",
+                                        symbol=shareholding_obj.get("symbol"),
+                                        name=shareholding_obj.get("name"),
+                                        rec_id=shareholding_obj.get("recordId"),
+                                        row=row)
+                                    if shareholding_all_data.get("type") == "data":
+                                        shareholding_all_data.update({"date": shareholding_obj.get("date")})
                                         shareholding_data_list.append(shareholding_all_data)
-                                    elif shareholding_obj.get("desc") == "NEW_1" and "-" in shareholding_obj.get("xbrl"):
-                                        print(shareholding_obj)
-                                        print(shareholding_obj.get("desc"))
-                                    elif shareholding_obj.get("desc") == "New":
-                                        print(shareholding_obj)
-                                        print(shareholding_obj.get("desc"))
-                                    elif shareholding_obj.get("desc") == "Old":
-                                        print(shareholding_obj)
-                                        print(shareholding_obj.get("desc"))
-                                await convert_custom_shareholding_pattern()
+                                        print(shareholding_obj.get("date"))
+                                    elif shareholding_all_data.get("type") == "redirect":
+                                        pass
+                                await save_multiple_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_dii_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_fii_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_government_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_public_shareholding(db, company.id, shareholding_data_list)
+
                         elif bse_company_list:
                             pass
                         elif nse_company_list:
