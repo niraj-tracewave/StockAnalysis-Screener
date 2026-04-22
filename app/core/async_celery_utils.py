@@ -22,7 +22,8 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     update_nse_bse_price_data_save_processed_symbol, decide_quarterly_format, bse_decide_quarterly_format, \
     update_nse_bse_newly_listed_stock_save_processed_symbol, fetch_newly_listed_stock_symbols_from_covered_symbol_json, \
     save_multiple_shareholding, save_multiple_dii_shareholding, save_multiple_fii_shareholding, \
-    save_multiple_government_shareholding, save_multiple_public_shareholding
+    save_multiple_government_shareholding, save_multiple_public_shareholding, \
+    fetch_symbols_from_covered_symbol_json_for_shareholder_result, update_nse_bse_shareholder_save_processed_symbol
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
@@ -1355,12 +1356,12 @@ async def fetch_and_store_newly_listed_company_data_from_nse_bse_async():
                                                                       "error", file_name)
 
 
-async def fetch_and_stock_shareholding_pattern_data_async():
+async def fetch_and_update_stock_shareholding_pattern_data_async():
     db = SessionLocalSync()
     error_symbols = []
     unsaved_symbols = []
-    current_processed_symbols = []
     processed_symbols = []
+    file_name = "nse_bse_stocks_share_holder_data"
     try:
         stmt = (
             select(CompanyStock)
@@ -1369,7 +1370,6 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                 CompanyStock.id == ShareHoldingPeriod.company_id
             )
             .distinct(CompanyStock.id)
-            # .where(QuarterlyResultDateset.company_id.is_(None))
             .options(selectinload(CompanyStock.details))
             .execution_options(yield_per=100)
         )
@@ -1379,17 +1379,17 @@ async def fetch_and_stock_shareholding_pattern_data_async():
 
         existing_symbols = set()
 
-        # skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_quarterly_result()
-        # existing_symbols.update(skipped_symbols_from_json)
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
         missing_symbols = [
             c for c in companies if c.nse_symbol not in existing_symbols
         ]
 
-        missing_symbols = missing_symbols[:100]
+        missing_symbols = missing_symbols[:50]
 
         current_processed_symbols = [c.nse_symbol for c in missing_symbols]
 
-        # await save_quarterly_result_processed_symbol(current_processed_symbols, "processing")
+        await update_nse_bse_shareholder_save_processed_symbol(current_processed_symbols, "processing", file_name)
 
         def chunk_list(data, size):
             for i in range(0, len(data), size):
@@ -1407,8 +1407,6 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                             if shareholding_list:
                                 shareholding_data_list = []
                                 for shareholding_obj in shareholding_list[1:2]:
-                                    print(shareholding_obj)
-                                    print("-------------------------------------------")
                                     row = {
                                         "date": shareholding_obj.get("date"),
                                         "remarksWeb": shareholding_obj.get("remarksWeb"),
@@ -1424,7 +1422,6 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                                     if shareholding_all_data.get("type") == "data":
                                         shareholding_all_data.update({"date": shareholding_obj.get("date")})
                                         shareholding_data_list.append(shareholding_all_data)
-                                        print(shareholding_obj.get("date"))
                                     elif shareholding_all_data.get("type") == "redirect":
                                         pass
                                 await save_multiple_shareholding(db, company.id, shareholding_data_list)
@@ -1432,13 +1429,46 @@ async def fetch_and_stock_shareholding_pattern_data_async():
                                 await save_multiple_fii_shareholding(db, company.id, shareholding_data_list)
                                 await save_multiple_government_shareholding(db, company.id, shareholding_data_list)
                                 await save_multiple_public_shareholding(db, company.id, shareholding_data_list)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
 
                         elif bse_company_list:
                             pass
                         elif nse_company_list:
-                            pass
+                            shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol, "sme")
+                            if shareholding_list:
+                                shareholding_data_list = []
+                                for shareholding_obj in shareholding_list[1:2]:
+                                    row = {
+                                        "date": shareholding_obj.get("date"),
+                                        "remarksWeb": shareholding_obj.get("remarksWeb"),
+                                        "revisionRemark": shareholding_obj.get("revisionRemark"),
+                                        "revisionDate": shareholding_obj.get("revisionDate"),
+                                    }
+                                    shareholding_all_data = await main_nse_fetch_shareholding_data_using_api(
+                                        id="popup1",
+                                        symbol=shareholding_obj.get("symbol"),
+                                        name=shareholding_obj.get("name"),
+                                        rec_id=shareholding_obj.get("recordId"),
+                                        row=row)
+                                    if shareholding_all_data.get("type") == "data":
+                                        shareholding_all_data.update({"date": shareholding_obj.get("date")})
+                                        shareholding_data_list.append(shareholding_all_data)
+                                    elif shareholding_all_data.get("type") == "redirect":
+                                        pass
+                                await save_multiple_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_dii_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_fii_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_government_shareholding(db, company.id, shareholding_data_list)
+                                await save_multiple_public_shareholding(db, company.id, shareholding_data_list)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
                         else:
                             unsaved_symbols.append(company.nse_symbol)
+                            continue
+                        processed_symbols.append(company.nse_symbol)
 
                 except Exception as e:
                     print("Error:", str(e))
@@ -1451,7 +1481,6 @@ async def fetch_and_stock_shareholding_pattern_data_async():
         raise
     finally:
         db.close()
-        # await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
-        # await save_quarterly_result_processed_symbol(error_symbols, "error")
-        # await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
-        # await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)

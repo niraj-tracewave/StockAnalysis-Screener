@@ -2546,6 +2546,73 @@ async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
             return {}
     return {}
 
+async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_name):
+    file_path  = get_custom_today_file(file_name)
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            processing = set(data.get("processing", []))
+            data_not_available = set(data.get("data_not_available", []))
+            error = set(data.get("error", []))
+            processed = set(data.get("processed_symbols", []))
+
+            return processing | data_not_available | error | processed
+
+        except Exception as e:
+            return {}
+    return {}
+
+async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+    data = {
+        "processing": [],
+        "data_not_available": [],
+        "processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "processing":
+        data["processing"].extend(symbols)
+        data["processing"] = list(set(data["processing"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "data_not_available":
+        data["data_not_available"].extend(symbols)
+        data["data_not_available"] = list(set(data["data_not_available"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
 
 from datetime import datetime
 from decimal import Decimal

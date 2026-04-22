@@ -56,5 +56,9 @@ celery_app.conf.beat_schedule = {
                 hour="10,13,16,19",
                 day_of_week="mon-fri",  # Monday to Friday
         ),
+    },
+    "fetch_and_update_stock_shareholding_pattern": {
+        "task": "fetch_and_update_stock_shareholding_pattern_data",
+        "schedule": crontab(minute="*/15"),
     }
 }
