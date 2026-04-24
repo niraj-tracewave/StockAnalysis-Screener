@@ -22,6 +22,18 @@ settings = get_settings()
 
 ANGEL_NSE_MAP = {}
 
+def run_async_task(coro):
+    import asyncio
+
+    # loop = asyncio.new_event_loop()
+    # try:
+    #     asyncio.set_event_loop(loop)
+    #     return loop.run_until_complete(coro)
+    # finally:
+    #     loop.run_until_complete(loop.shutdown_asyncgens())
+    #     loop.close()
+    return asyncio.run(coro)
+
 async def generate_otp_from_pyotp():
     user_uuid = uuid.uuid4()
     secret = base64.b32encode(user_uuid.bytes).decode('utf-8').rstrip("=")

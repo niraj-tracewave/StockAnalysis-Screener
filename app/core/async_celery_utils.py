@@ -923,12 +923,8 @@ async def update_nse_bse_scrip_code_async():
     )
 
     result = db.execute(stmt)
-    # companies = result.scalars().all()
     processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
     new_process_symbol = []
-    # unprocessed_companies = [
-    #     c for c in companies if c.nse_symbol not in processed_symbols
-    # ][:25]
     unprocessed_companies = []
     for c in result.scalars():
         if c.nse_symbol not in processed_symbols:
@@ -955,7 +951,6 @@ async def update_nse_bse_scrip_code_async():
             elif bse_security_code:
                 platform = "BSE"
                 bse_code = bse_security_code if bse_security_code else None
-
             company.bse_code = bse_code
             company.nse_code = nse_code
 
@@ -985,12 +980,8 @@ async def update_nse_bse_stock_information_async():
     file_name = "update_nse_bse_price_data.json"
     error_symbols = []
     result = db.execute(stmt)
-    # companies = result.scalars().all()
     processed_symbols = set(await update_nse_bse_price_data_load_processed_symbols(file_name))
     new_process_symbol = []
-    # unprocessed_companies = [
-    #     c for c in result.scalars() if c.nse_symbol not in processed_symbols
-    # ][:30]
     unprocessed_companies = []
     for c in result.scalars():
         if c.nse_symbol not in processed_symbols:
