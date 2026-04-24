@@ -23,8 +23,11 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     update_nse_bse_newly_listed_stock_save_processed_symbol, fetch_newly_listed_stock_symbols_from_covered_symbol_json, \
     save_multiple_shareholding, save_multiple_dii_shareholding, save_multiple_fii_shareholding, \
     save_multiple_government_shareholding, save_multiple_public_shareholding, \
-    fetch_symbols_from_covered_symbol_json_for_shareholder_result, update_nse_bse_shareholder_save_processed_symbol
+    fetch_symbols_from_covered_symbol_json_for_shareholder_result, update_nse_bse_shareholder_save_processed_symbol, \
+    save_bse_multiple_shareholding, save_bse_multiple_dii_shareholding, save_bse_multiple_fii_shareholding, \
+    save_bse_multiple_government_shareholding, save_bse_multiple_public_shareholding, to_year_month
 from app.db.postgres.sync_session import SessionLocalSync
+from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
 from scripts.fetch_daily_listed_stocks import main_newly_listed_stocks
@@ -1406,7 +1409,7 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                             shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol, "equities")
                             if shareholding_list:
                                 shareholding_data_list = []
-                                for shareholding_obj in shareholding_list[1:2]:
+                                for shareholding_obj in shareholding_list:
                                     row = {
                                         "date": shareholding_obj.get("date"),
                                         "remarksWeb": shareholding_obj.get("remarksWeb"),
@@ -1434,12 +1437,36 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                                 continue
 
                         elif bse_company_list:
-                            pass
+                            shareholding_list = await main_bse_fetch_shareholding_list(company.bse_code)
+                            cutoff = await to_year_month("Mar 2023")
+                            shareholding_list = [
+                                item for item in shareholding_list.get("Table", [])
+                                if await to_year_month(item["qtr"]) >= cutoff
+                            ]
+                            if shareholding_list:
+                                shareholding_data_list = []
+                                for shareholding_obj in shareholding_list:
+                                    if shareholding_obj.get("status") == "New":
+                                        navigateurl_promoter = f"corporates/shpPromoterNGroup.aspx?scripcd={company.bse_code}&qtrid={shareholding_obj.get("qtrid")}&QtrName={shareholding_obj.get("qtr")}"
+                                        navigateurl_publicshareholder = f"corporates/shpPublicShareholder.aspx?scripcd={company.bse_code}&qtrid={shareholding_obj.get("qtrid")}&QtrName={shareholding_obj.get("qtr")}"
+                                        promoter_data = await parse_bse_promoter_table(navigateurl_promoter)
+                                        public_shareholder_data = await parse_bse_public_shareholder_table(navigateurl_publicshareholder)
+                                        promoter_data.update(public_shareholder_data)
+                                        promoter_data.update({"date": shareholding_obj.get("qtr")})
+                                        shareholding_data_list.append(promoter_data)
+                                await save_bse_multiple_shareholding(db, company.id, shareholding_data_list)
+                                await save_bse_multiple_dii_shareholding(db, company.id, shareholding_data_list)
+                                await save_bse_multiple_fii_shareholding(db, company.id, shareholding_data_list)
+                                await save_bse_multiple_government_shareholding(db, company.id, shareholding_data_list)
+                                await save_bse_multiple_public_shareholding(db, company.id, shareholding_data_list)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
                         elif nse_company_list:
                             shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol, "sme")
                             if shareholding_list:
                                 shareholding_data_list = []
-                                for shareholding_obj in shareholding_list[1:2]:
+                                for shareholding_obj in shareholding_list:
                                     row = {
                                         "date": shareholding_obj.get("date"),
                                         "remarksWeb": shareholding_obj.get("remarksWeb"),

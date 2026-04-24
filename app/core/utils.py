@@ -2617,6 +2617,15 @@ async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_na
 from datetime import datetime
 from decimal import Decimal
 
+
+async def parse_date(date_str: str):
+    try:
+        return datetime.strptime(date_str, "%d %b %Y").date()
+    except ValueError:
+        dt = datetime.strptime(date_str, "%B %Y")
+        last_day = calendar.monthrange(dt.year, dt.month)[1]
+        return f"{last_day} {dt.strftime('%b %Y')}"
+
 async def save_multiple_shareholding(session, company_id, api_response):
     """
     api_response = list of period objects OR single object
@@ -2684,6 +2693,68 @@ async def save_multiple_shareholding(session, company_id, api_response):
                 break
 
         children.sort(key=lambda x: x.value, reverse=True)
+
+        promoter_section = ShareHoldingSection(
+            period_id=period.id,
+            key="promoters",
+            label="Promoters",
+            value_type="percent",
+            total_value=total_value,
+            children=children
+        )
+
+        session.add(promoter_section)
+
+async def save_bse_multiple_shareholding(session, company_id, api_response):
+    if isinstance(api_response, dict):
+        api_response = [api_response]
+
+    for item in api_response:
+        promoter_list = item.get("promoter", [])
+        summary = item.get("summary", {})
+        date_str = item.get("date")
+
+        if not date_str:
+            continue
+        period_date = await parse_date(date_str)
+        period = session.query(ShareHoldingPeriod).filter_by(
+            company_id=company_id,
+            period_date=period_date,
+            period_type="quarterly"
+        ).first()
+
+        if not period:
+            period = ShareHoldingPeriod(
+                company_id=company_id,
+                period_date=period_date,
+                period_type="quarterly"
+            )
+            session.add(period)
+            session.flush()
+
+        existing_section = session.query(ShareHoldingSection).filter_by(
+            period_id=period.id,
+            key="promoters"
+        ).one_or_none()
+
+        if existing_section:
+            continue
+
+        children = []
+        for row in promoter_list:
+            name = row.get("name")
+            value = Decimal(row.get("shareholding_percent") or 0)
+
+            children.append(
+                ShareHoldingSectionChild(
+                    label=name,
+                    value=value
+                )
+            )
+
+        children.sort(key=lambda x: x.value, reverse=True)
+
+        total_value = Decimal(summary.get("shareholding_percent") or 0)
 
         promoter_section = ShareHoldingSection(
             period_id=period.id,
@@ -2781,6 +2852,81 @@ async def save_multiple_dii_shareholding(session, company_id, api_response):
         session.add(dii_section)
 
 
+async def save_bse_multiple_dii_shareholding(session, company_id, api_response):
+
+    if isinstance(api_response, dict):
+        api_response = [api_response]
+
+    for item in api_response:
+        public_list = item.get("public", [])
+        date_str = item.get("date")
+
+        if not date_str:
+            continue
+
+        period_date = await parse_date(date_str)
+        period = session.query(ShareHoldingPeriod).filter_by(
+            company_id=company_id,
+            period_date=period_date,
+            period_type="quarterly"
+        ).first()
+
+        if not period:
+            period = ShareHoldingPeriod(
+                company_id=company_id,
+                period_date=period_date,
+                period_type="quarterly"
+            )
+            session.add(period)
+            session.flush()
+
+        existing_section = session.query(ShareHoldingSection).filter_by(
+            period_id=period.id,
+            key="diis"
+        ).one_or_none()
+
+        if existing_section:
+            continue
+
+        children = []
+        total_value = Decimal("0")
+
+        for row in public_list:
+            name = (row.get("name") or "").strip()
+            if row.get("is_bold") and name.lower() != 'sub total b1':
+                continue
+            percent = row.get("shareholding_percent")
+
+            name_lower = name.lower()
+
+            if not name or name == "-":
+                continue
+
+            if "sub total b1" in name_lower:
+                total_value = percent
+                break
+
+            children.append(
+                ShareHoldingSectionChild(
+                    label=name,
+                    value=percent,
+                )
+            )
+
+        children.sort(key=lambda x: x.value, reverse=True)
+
+        public_section = ShareHoldingSection(
+            period_id=period.id,
+            key="diis",
+            label="DIIs",
+            value_type="percent",
+            total_value=total_value,
+            children=children
+        )
+
+        session.add(public_section)
+
+
 async def save_multiple_fii_shareholding(session, company_id, api_response):
 
     if isinstance(api_response, dict):
@@ -2874,6 +3020,89 @@ async def save_multiple_fii_shareholding(session, company_id, api_response):
         )
 
         session.add(fii_section)
+
+async def save_bse_multiple_fii_shareholding(session, company_id, api_response):
+
+    if isinstance(api_response, dict):
+        api_response = [api_response]
+
+    for item in api_response:
+        public_list = item.get("public", [])
+        date_str = item.get("date")
+
+        if not date_str:
+            continue
+
+        period_date = await parse_date(date_str)
+        period = session.query(ShareHoldingPeriod).filter_by(
+            company_id=company_id,
+            period_date=period_date,
+            period_type="quarterly"
+        ).first()
+
+        if not period:
+            period = ShareHoldingPeriod(
+                company_id=company_id,
+                period_date=period_date,
+                period_type="quarterly"
+            )
+            session.add(period)
+            session.flush()
+
+        existing_section = session.query(ShareHoldingSection).filter_by(
+            period_id=period.id,
+            key="fiis"
+        ).one_or_none()
+
+        if existing_section:
+            continue
+
+        children = []
+        total_value = "0.0"
+
+        start_fii = False
+
+        for row in public_list:
+            name = (row.get("name") or "").strip()
+            if "b2) institutions (foreign)" in name.lower():
+                start_fii = True
+                continue
+
+            if not start_fii:
+                continue
+
+            if row.get("is_bold") and name.lower() != 'sub total b2':
+                continue
+
+            percent = row.get("shareholding_percent")
+
+            name_lower = name.lower()
+
+            if not name or name == "-":
+                continue
+
+            if "sub total b2" in name_lower:
+                total_value = percent
+                break
+
+            children.append(
+                ShareHoldingSectionChild(
+                    label=name,
+                    value=percent,
+                )
+            )
+
+        children.sort(key=lambda x: x.value, reverse=True)
+        public_section = ShareHoldingSection(
+            period_id=period.id,
+            key="fiis",
+            label="FIIs",
+            value_type="percent",
+            total_value=total_value,
+            children=children
+        )
+
+        session.add(public_section)
 
 async def save_multiple_government_shareholding(session, company_id, api_response):
 
@@ -2969,6 +3198,89 @@ async def save_multiple_government_shareholding(session, company_id, api_respons
 
         session.add(fii_section)
 
+async def save_bse_multiple_government_shareholding(session, company_id, api_response):
+
+    if isinstance(api_response, dict):
+        api_response = [api_response]
+
+    for item in api_response:
+        public_list = item.get("public", [])
+        date_str = item.get("date")
+
+        if not date_str:
+            continue
+
+        period_date = await parse_date(date_str)
+        period = session.query(ShareHoldingPeriod).filter_by(
+            company_id=company_id,
+            period_date=period_date,
+            period_type="quarterly"
+        ).first()
+
+        if not period:
+            period = ShareHoldingPeriod(
+                company_id=company_id,
+                period_date=period_date,
+                period_type="quarterly"
+            )
+            session.add(period)
+            session.flush()
+
+        existing_section = session.query(ShareHoldingSection).filter_by(
+            period_id=period.id,
+            key="government"
+        ).one_or_none()
+
+        if existing_section:
+            continue
+
+        children = []
+        total_value = "0.0"
+
+        start_government = False
+
+        for row in public_list:
+            name = (row.get("name") or "").strip()
+            if "b3) central government/ state government(s)/ president of india" in name.lower():
+                start_government = True
+                continue
+
+            if not start_government:
+                continue
+
+            if row.get("is_bold") and name.lower() != 'sub total b3':
+                continue
+
+            percent = row.get("shareholding_percent")
+
+            name_lower = name.lower()
+
+            if not name or name == "-":
+                continue
+
+            if "sub total b3" in name_lower:
+                total_value = percent
+                break
+
+            children.append(
+                ShareHoldingSectionChild(
+                    label=name,
+                    value=percent,
+                )
+            )
+
+        children.sort(key=lambda x: x.value, reverse=True)
+        public_section = ShareHoldingSection(
+            period_id=period.id,
+            key="government",
+            label="Government",
+            value_type="percent",
+            total_value=total_value,
+            children=children
+        )
+
+        session.add(public_section)
+
 async def save_multiple_public_shareholding(session, company_id, api_response):
 
     if isinstance(api_response, dict):
@@ -3044,9 +3356,6 @@ async def save_multiple_public_shareholding(session, company_id, api_response):
                 total_value = value
                 break
 
-            # if "non-institutions" in name_lower:
-            #     continue
-
             if name.lower() not in public_category_lists:
                 children.append(
                     ShareHoldingSectionChild(
@@ -3067,3 +3376,113 @@ async def save_multiple_public_shareholding(session, company_id, api_response):
         )
 
         session.add(fii_section)
+
+async def save_bse_multiple_public_shareholding(session, company_id, api_response):
+
+    if isinstance(api_response, dict):
+        api_response = [api_response]
+
+    for item in api_response:
+        public_list = item.get("public", [])
+        date_str = item.get("date")
+
+        if not date_str:
+            continue
+
+        period_date = await parse_date(date_str)
+        period = session.query(ShareHoldingPeriod).filter_by(
+            company_id=company_id,
+            period_date=period_date,
+            period_type="quarterly"
+        ).first()
+
+        if not period:
+            period = ShareHoldingPeriod(
+                company_id=company_id,
+                period_date=period_date,
+                period_type="quarterly"
+            )
+            session.add(period)
+            session.flush()
+
+        existing_section = session.query(ShareHoldingSection).filter_by(
+            period_id=period.id,
+            key="public"
+        ).one_or_none()
+
+        if existing_section:
+            continue
+
+        children = []
+        total_value = "0.0"
+
+        start_public = False
+
+        public_category_lists = ['non-institutions', 'associate companies / subsidiaries',
+                                 'directors and their relatives (excluding independent directors and nominee directors)',
+                                 'key managerial personnel',
+                                 'relatives of promoters (other than "immediate relatives" of promoters disclosed under "promoter and promoter group" category)',
+                                 'trusts where any person belonging to "promoter and promoter group" category is "trustee", "beneficiary", or "author of the trust"',
+                                 'investor education and protection fund (iepf)',
+                                 'resident individuals holding nominal share capital up to Rs. 2 lakhs',
+                                 'resident individuals holding nominal share capital in excess of Rs. 2 lakhs',
+                                 'non resident indians (nris)', 'foreign nationals', 'foreign companies',
+                                 'bodies corporate', 'any other (specify)', 'resident individuals',
+                                 'clearing members', 'esop or esos or esps', 'employees', 'huf', 'trusts', 'llp',
+                                 'others', 'foreign portfolio investor (category - iii)', 'overseas corporate bodies',
+                                 'unclaimed or suspense or escrow account'
+                                 'independent director or his relatives', 'societies'
+                                 ]
+
+        for row in public_list:
+            name = (row.get("name") or "").strip()
+            if "b4) non-institutions" in name.lower():
+                start_public = True
+                continue
+
+            if not start_public:
+                continue
+
+            if row.get("is_bold") and name.lower() != 'sub total b4':
+                continue
+
+            percent = row.get("shareholding_percent")
+
+            name_lower = name.lower()
+
+            if not name or name == "-":
+                continue
+
+            if "sub total b4" in name_lower:
+                total_value = percent
+                break
+
+            if name.lower() not in public_category_lists:
+                children.append(
+                    ShareHoldingSectionChild(
+                        label=name,
+                        value=percent,
+                    )
+                )
+
+        children.sort(key=lambda x: x.value, reverse=True)
+        public_section = ShareHoldingSection(
+            period_id=period.id,
+            key="public",
+            label="Public",
+            value_type="percent",
+            total_value=total_value,
+            children=children
+        )
+
+        session.add(public_section)
+
+async  def to_year_month(date_str):
+    from datetime import datetime
+
+    for fmt in ("%d %b %Y", "%d %B %Y", "%b %Y", "%B %Y"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.year, dt.month
+        except ValueError:
+            continue
