@@ -2577,6 +2577,25 @@ async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_nam
             return {}
     return {}
 
+async def fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name):
+    file_path  = get_custom_today_file(file_name)
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            processing = set(data.get("processing", []))
+            data_not_available = set(data.get("data_not_available", []))
+            error = set(data.get("error", []))
+            processed = set(data.get("processed_symbols", []))
+
+            return processing | data_not_available | error | processed
+
+        except Exception as e:
+            return {}
+    return {}
+
 async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_name):
     file = get_custom_today_file(file_name)
     data = {
@@ -2626,6 +2645,55 @@ async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_na
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
 
+
+async def update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+    data = {
+        "processing": [],
+        "data_not_available": [],
+        "processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "processing":
+        data["processing"].extend(symbols)
+        data["processing"] = list(set(data["processing"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "data_not_available":
+        data["data_not_available"].extend(symbols)
+        data["data_not_available"] = list(set(data["data_not_available"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
 from datetime import datetime
 from decimal import Decimal
 
@@ -3498,3 +3566,238 @@ async  def to_year_month(date_str):
             return dt.year, dt.month
         except ValueError:
             continue
+
+async def make_key(label: str) -> str:
+    """Convert a human label to snake_case key.
+    e.g. 'Long Term Borrowings' -> 'long_term_borrowings'
+    """
+    key = label.lower().strip()
+    key = re.sub(r"[^a-z0-9\s]", "", key)
+    key = re.sub(r"\s+", "_", key)
+    return re.sub(r"_+", "_", key).strip("_")
+
+
+async def clean_value(val: str):
+    """Convert string cell to int / float / None."""
+    val = val.strip().replace(",", "").replace("\xa0", "")
+    if val in ("", "-", "--", "N/A", "NA"):
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        return val
+
+
+async def get_unit(label_cell) -> str:
+    """Read unit from data-original-title tooltip, default Rs Cr."""
+    el = label_cell.find(attrs={"data-original-title": True})
+    if el:
+        m = re.search(r"\(([^)]+)\)", el.get("data-original-title", ""))
+        if m:
+            return m.group(1)
+    return "Rs Cr"
+
+
+async def is_child_row(tr) -> bool:
+    """True if row is indented (padding-left style or child/sub class)."""
+    classes = " ".join(tr.get("class", [])).lower()
+    if "child" in classes or "sub" in classes:
+        return True
+    first_td = tr.find(["th", "td"])
+    if first_td:
+        style = first_td.get("style", "")
+        if "padding-left" in style or "text-indent" in style:
+            return True
+    return False
+
+
+async def extract_table_data(table) -> dict:
+    """
+    Parse table rows and return structured output.
+
+    Classification:
+      thead tr.bgColor          -> period column headers
+      tbody tr.bgColor          -> section divider (skip)
+      td[colspan]  / 1 cell     -> section divider (skip)
+      is_child_row() == True    -> child of the previous top-level row
+      everything else           -> top-level row (single or group)
+    """
+    headers = []
+    rows    = []   # final top-level rows
+
+    thead = table.find("thead")
+    tbody = table.find("tbody")
+
+    if thead:
+        for cell in thead.find("tr").find_all(["th", "td"])[1:]:
+            t = cell.get_text(strip=True)
+            if t:
+                headers.append(t)
+
+    raw = []
+    rows_source = tbody.find_all("tr") if tbody else table.find_all("tr")
+
+    for tr in rows_source:
+        cells = tr.find_all(["th", "td"])
+        if not cells:
+            continue
+
+        label_cell = cells[0]
+        label = label_cell.get_text(strip=True)
+
+        if not label or label.lower() == "particulars":
+            continue
+
+        if label_cell.get("colspan") or len(cells) == 1:
+            continue
+
+        tr_cls = [c.lower() for c in tr.get("class", [])]
+        values = [await clean_value(c.get_text(strip=True)) for c in cells[1:]]
+
+        if "bgcolor" in tr_cls:
+            raw.append({
+                "key":    await make_key(label),
+                "label":  label,
+                "unit":   await get_unit(label_cell),
+                "values": values,
+                "_is_bgcolor": True,
+                "_child": False,
+            })
+        else:
+            raw.append({
+                "key":    await make_key(label),
+                "label":  label,
+                "unit":   await get_unit(label_cell),
+                "values": values,
+                "_is_bgcolor": False,
+                "_child": await is_child_row(tr),
+            })
+
+    current_bgcolor_group = None
+
+    for item in raw:
+        is_bgcolor  = item.pop("_is_bgcolor")
+        is_child    = item.pop("_child")
+
+        if is_bgcolor:
+            item["type"]     = "group"
+            item["children"] = []
+            rows.append(item)
+            current_bgcolor_group = item
+
+        elif is_child:
+            if current_bgcolor_group and current_bgcolor_group["children"]:
+                parent = current_bgcolor_group["children"][-1]
+                parent["type"] = "group"
+                if "children" not in parent:
+                    parent["children"] = []
+                item["type"] = "single"
+                parent["children"].append(item)
+            elif current_bgcolor_group:
+                item["type"] = "single"
+                current_bgcolor_group["children"].append(item)
+
+        else:
+            item["type"] = "single"
+            if current_bgcolor_group is not None:
+                current_bgcolor_group["children"].append(item)
+            else:
+                rows.append(item)
+
+    return {"headers": headers, "rows": rows}
+
+async def parse_balance_sheet(soup: BeautifulSoup) -> dict:
+    """
+    Navigate DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#balance
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        return {'headers': [], 'rows': []}
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        return {'headers': [], 'rows': []}
+    bd = pd_.find("div", id="balance")
+    if not bd:
+        return {'headers': [], 'rows': []}
+    tbl = bd.find("table")
+    if not tbl:
+        return {'headers': [], 'rows': []}
+    return await extract_table_data(tbl)
+
+async def parse_profit_loss(soup : BeautifulSoup) -> dict:
+    """
+    Accepts either a BeautifulSoup object or a raw HTML string.
+
+    DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#profit          <-- only difference from balance sheet
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        raise ValueError("div.companyinfo not found")
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        raise ValueError("div#mainContent_pnlCompanyDetails not found")
+    pf = pd_.find("div", id="profit")
+    if not pf:
+        raise ValueError("div#profit not found")
+    tbl = pf.find("table")
+    if not tbl:
+        raise ValueError("table not found inside div#profit")
+
+    return await extract_table_data(tbl)   # reuse exact same parser
+
+async def parse_cash_flow(soup: BeautifulSoup) -> dict:
+    """
+    Navigate DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#mainContent_cashflows
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        return {'headers': [], 'rows': []}
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        return {'headers': [], 'rows': []}
+    bd = pd_.find("div", id="mainContent_cashflows")
+    if not bd:
+        return {'headers': [], 'rows': []}
+    tbl = bd.find("table")
+    if not tbl:
+        return {'headers': [], 'rows': []}
+    return await extract_table_data(tbl)
+
+async def make_short_company_name(text):
+
+    words = text.split()
+
+    if len(words) == 1:
+        return text.lower()
+
+    text = ' '.join(words[:-1])   # remove last word
+    text = ' '.join(text.split()[:2])  # take first 3 words and join
+
+    return text
+
+async def find_by_scripcode(results: list, scripcode: int) -> dict | None:
+    """
+    results = [{"compname": "...", "SCRIPCODE": 523840, ...}, ...]
+    Returns the matching item or None.
+    """
+    print(scripcode)
+    for item in results:
+        if scripcode and item.get("SCRIPCODE") == int(scripcode):
+            return item
+    return None
