@@ -60,5 +60,13 @@ celery_app.conf.beat_schedule = {
     "fetch_and_update_stock_shareholding_pattern": {
         "task": "fetch_and_update_stock_shareholding_pattern_data",
         "schedule": crontab(minute="*/15"),
+    },
+    "fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data": {
+            "task": "fetch_and_update_stock_balance_sheet_consolidated_data",
+            "schedule": crontab(minute="*/16"),
+    },
+    "fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data": {
+        "task": "fetch_and_update_stock_balance_sheet_standalone_data",
+        "schedule": crontab(minute="*/17"),
     }
 }

@@ -3,6 +3,8 @@ import os
 import re
 import unicodedata
 from collections import defaultdict, deque
+from datetime import datetime
+from decimal import Decimal
 
 import aiohttp
 import pandas as pd
@@ -2694,8 +2696,7 @@ async def update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_proces
 
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
-from datetime import datetime
-from decimal import Decimal
+
 
 
 async def parse_date(date_str: str):
@@ -3246,7 +3247,6 @@ async def save_multiple_government_shareholding(session, company_id, api_respons
 
             value = Decimal(row.get("COL_XI") or 0)
 
-            print(value)
             if not name or name == "-":
                 continue
 
@@ -3744,16 +3744,16 @@ async def parse_profit_loss(soup : BeautifulSoup) -> dict:
     """
     ci = soup.find("div", class_="companyinfo")
     if not ci:
-        raise ValueError("div.companyinfo not found")
+        return {'headers': [], 'rows': []}
     pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
     if not pd_:
-        raise ValueError("div#mainContent_pnlCompanyDetails not found")
+        return {'headers': [], 'rows': []}
     pf = pd_.find("div", id="profit")
     if not pf:
-        raise ValueError("div#profit not found")
+        return {'headers': [], 'rows': []}
     tbl = pf.find("table")
     if not tbl:
-        raise ValueError("table not found inside div#profit")
+        return {'headers': [], 'rows': []}
 
     return await extract_table_data(tbl)   # reuse exact same parser
 
@@ -3796,7 +3796,6 @@ async def find_by_scripcode(results: list, scripcode: int) -> dict | None:
     results = [{"compname": "...", "SCRIPCODE": 523840, ...}, ...]
     Returns the matching item or None.
     """
-    print(scripcode)
     for item in results:
         if scripcode and item.get("SCRIPCODE") == int(scripcode):
             return item
