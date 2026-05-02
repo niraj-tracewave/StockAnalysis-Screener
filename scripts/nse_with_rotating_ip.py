@@ -230,8 +230,8 @@ class FastNSEClient:
     async def init(self):
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=3600,
-            limit=100,
-            limit_per_host=20,
+            limit=20,
+            limit_per_host=5,
             enable_cleanup_closed=True,
             ssl=False
         )
@@ -435,4 +435,3 @@ async def main(symbol: str):
         return data
     finally:
         await client.close()
-

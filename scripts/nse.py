@@ -13,8 +13,8 @@ class FastNSEClient:
         # Ultra-fast TCP connector tuning
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=3600,     # cache DNS for 1 hour
-            limit=100,              # max parallel connections
-            limit_per_host=20,
+            limit=20,               # keep requests quick without a burst from one static IP
+            limit_per_host=5,
             enable_cleanup_closed=True,
             ssl=False
         )
@@ -176,8 +176,7 @@ class FastNSEClient:
 async def main(symbol):
     c = FastNSEClient()
     await c.init()
-
-    data = await c.full(symbol)
-
-    await c.close()
-    return data
+    try:
+        return await c.full(symbol)
+    finally:
+        await c.close()
