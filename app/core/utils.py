@@ -3,6 +3,8 @@ import os
 import re
 import unicodedata
 from collections import defaultdict, deque
+from datetime import datetime
+from decimal import Decimal
 
 import aiohttp
 import pandas as pd
@@ -2577,6 +2579,25 @@ async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_nam
             return {}
     return {}
 
+async def fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name):
+    file_path  = get_custom_today_file(file_name)
+
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+
+            processing = set(data.get("processing", []))
+            data_not_available = set(data.get("data_not_available", []))
+            error = set(data.get("error", []))
+            processed = set(data.get("processed_symbols", []))
+
+            return processing | data_not_available | error | processed
+
+        except Exception as e:
+            return {}
+    return {}
+
 async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_name):
     file = get_custom_today_file(file_name)
     data = {
@@ -2626,8 +2647,56 @@ async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_na
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
 
-from datetime import datetime
-from decimal import Decimal
+
+async def update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(symbols, key, file_name):
+    file = get_custom_today_file(file_name)
+    data = {
+        "processing": [],
+        "data_not_available": [],
+        "processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file):
+        try:
+            with open(file, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "processing":
+        data["processing"].extend(symbols)
+        data["processing"] = list(set(data["processing"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    elif key == "data_not_available":
+        data["data_not_available"].extend(symbols)
+        data["data_not_available"] = list(set(data["data_not_available"]))
+
+        current_set = set(data.get("processing", []))
+        current_set -= set(symbols)
+        data["processing"] = list(current_set)
+
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
+
 
 
 async def parse_date(date_str: str):
@@ -3178,7 +3247,6 @@ async def save_multiple_government_shareholding(session, company_id, api_respons
 
             value = Decimal(row.get("COL_XI") or 0)
 
-            print(value)
             if not name or name == "-":
                 continue
 
@@ -3498,3 +3566,356 @@ async  def to_year_month(date_str):
             return dt.year, dt.month
         except ValueError:
             continue
+
+async def make_key(label: str) -> str:
+    """Convert a human label to snake_case key.
+    e.g. 'Long Term Borrowings' -> 'long_term_borrowings'
+    """
+    key = label.lower().strip()
+    key = re.sub(r"[^a-z0-9\s]", "", key)
+    key = re.sub(r"\s+", "_", key)
+    return re.sub(r"_+", "_", key).strip("_")
+
+
+async def clean_value(val: str):
+    """Convert string cell to int / float / None."""
+    val = val.strip().replace(",", "").replace("\xa0", "")
+    if val in ("", "-", "--", "N/A", "NA"):
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        return val
+
+
+async def get_unit(label_cell) -> str:
+    """Read unit from data-original-title tooltip, default Rs Cr."""
+    el = label_cell.find(attrs={"data-original-title": True})
+    if el:
+        m = re.search(r"\(([^)]+)\)", el.get("data-original-title", ""))
+        if m:
+            return m.group(1)
+    return "Rs Cr"
+
+
+async def is_child_row(tr) -> bool:
+    """True if row is indented (padding-left style or child/sub class)."""
+    classes = " ".join(tr.get("class", [])).lower()
+    if "child" in classes or "sub" in classes:
+        return True
+    first_td = tr.find(["th", "td"])
+    if first_td:
+        style = first_td.get("style", "")
+        if "padding-left" in style or "text-indent" in style:
+            return True
+    return False
+
+
+async def extract_table_data(table) -> dict:
+    """
+    Parse table rows and return structured output.
+
+    Classification:
+      thead tr.bgColor          -> period column headers
+      tbody tr.bgColor          -> section divider (skip)
+      td[colspan]  / 1 cell     -> section divider (skip)
+      is_child_row() == True    -> child of the previous top-level row
+      everything else           -> top-level row (single or group)
+    """
+    headers = []
+    rows    = []   # final top-level rows
+
+    thead = table.find("thead")
+    tbody = table.find("tbody")
+
+    if thead:
+        for cell in thead.find("tr").find_all(["th", "td"])[1:]:
+            t = cell.get_text(strip=True)
+            if t:
+                headers.append(t)
+
+    raw = []
+    rows_source = tbody.find_all("tr") if tbody else table.find_all("tr")
+
+    for tr in rows_source:
+        cells = tr.find_all(["th", "td"])
+        if not cells:
+            continue
+
+        label_cell = cells[0]
+        label = label_cell.get_text(strip=True)
+
+        if not label or label.lower() == "particulars":
+            continue
+
+        if label_cell.get("colspan") or len(cells) == 1:
+            continue
+
+        tr_cls = [c.lower() for c in tr.get("class", [])]
+        values = [await clean_value(c.get_text(strip=True)) for c in cells[1:]]
+
+        if "bgcolor" in tr_cls:
+            raw.append({
+                "key":    await make_key(label),
+                "label":  label,
+                "unit":   await get_unit(label_cell),
+                "values": values,
+                "_is_bgcolor": True,
+                "_child": False,
+            })
+        else:
+            raw.append({
+                "key":    await make_key(label),
+                "label":  label,
+                "unit":   await get_unit(label_cell),
+                "values": values,
+                "_is_bgcolor": False,
+                "_child": await is_child_row(tr),
+            })
+
+    current_bgcolor_group = None
+
+    for item in raw:
+        is_bgcolor  = item.pop("_is_bgcolor")
+        is_child    = item.pop("_child")
+
+        if is_bgcolor:
+            item["type"]     = "group"
+            item["children"] = []
+            rows.append(item)
+            current_bgcolor_group = item
+
+        elif is_child:
+            if current_bgcolor_group and current_bgcolor_group["children"]:
+                parent = current_bgcolor_group["children"][-1]
+                parent["type"] = "group"
+                if "children" not in parent:
+                    parent["children"] = []
+                item["type"] = "single"
+                parent["children"].append(item)
+            elif current_bgcolor_group:
+                item["type"] = "single"
+                current_bgcolor_group["children"].append(item)
+
+        else:
+            item["type"] = "single"
+            if current_bgcolor_group is not None:
+                current_bgcolor_group["children"].append(item)
+            else:
+                rows.append(item)
+
+    return {"headers": headers, "rows": rows}
+
+async def parse_balance_sheet(soup: BeautifulSoup) -> dict:
+    """
+    Navigate DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#balance
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        return {'headers': [], 'rows': []}
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        return {'headers': [], 'rows': []}
+    bd = pd_.find("div", id="balance")
+    if not bd:
+        return {'headers': [], 'rows': []}
+    tbl = bd.find("table")
+    if not tbl:
+        return {'headers': [], 'rows': []}
+    return await extract_table_data(tbl)
+
+async def parse_profit_loss(soup : BeautifulSoup) -> dict:
+    """
+    Accepts either a BeautifulSoup object or a raw HTML string.
+
+    DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#profit          <-- only difference from balance sheet
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        return {'headers': [], 'rows': []}
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        return {'headers': [], 'rows': []}
+    pf = pd_.find("div", id="profit")
+    if not pf:
+        return {'headers': [], 'rows': []}
+    tbl = pf.find("table")
+    if not tbl:
+        return {'headers': [], 'rows': []}
+
+    return await extract_table_data(tbl)   # reuse exact same parser
+
+async def parse_cash_flow(soup: BeautifulSoup) -> dict:
+    """
+    Navigate DOM path:
+      div.companyinfo
+        > div#mainContent_pnlCompanyDetails
+          > div#mainContent_cashflows
+            > table
+    """
+    ci = soup.find("div", class_="companyinfo")
+    if not ci:
+        return {'headers': [], 'rows': []}
+    pd_ = ci.find("div", id="mainContent_pnlCompanyDetails")
+    if not pd_:
+        return {'headers': [], 'rows': []}
+    bd = pd_.find("div", id="mainContent_cashflows")
+    if not bd:
+        return {'headers': [], 'rows': []}
+    tbl = bd.find("table")
+    if not tbl:
+        return {'headers': [], 'rows': []}
+    return await extract_table_data(tbl)
+
+async def make_short_company_name(text):
+
+    words = text.split()
+
+    if len(words) == 1:
+        return text.lower()
+
+    text = ' '.join(words[:-1])   # remove last word
+    text = ' '.join(text.split()[:2])  # take first 3 words and join
+
+    return text
+
+async def find_by_scripcode(results: list, scripcode: int) -> dict | None:
+    """
+    results = [{"compname": "...", "SCRIPCODE": 523840, ...}, ...]
+    Returns the matching item or None.
+    """
+    for item in results:
+        if scripcode and item.get("SCRIPCODE") == int(scripcode):
+            return item
+    return None
+
+async def split_purpose_into_rows(row, purpose_col):
+    """
+    Extracts ALL individual dividend entries from a combined purpose string.
+    Works for 2, 3, 4 or more dividends in the same string.
+    """
+    purpose = str(row[purpose_col])
+
+    # Strategy 1: Split on explicit separators: '/', 'And', '+'
+    parts = re.split(r'\s*/\s*|\s+[Aa]nd\s+|\s+\+\s+', purpose)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    # Strategy 2: If still 1 part, split on keyword boundary after "Per Share"
+    # e.g. "Interim Dividend Rs 10 Per Share Special Dividend Rs 66 Per Share"
+    if len(parts) < 2:
+        # Insert a delimiter before each dividend keyword that follows "Share"
+        tagged = re.sub(
+            r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
+            r'\1|||',
+            purpose,
+            flags=re.IGNORECASE
+        )
+        parts = [p.strip() for p in tagged.split('|||') if p.strip()]
+
+    # Strategy 3: Regex — find every "Dividend Rs X Per Share" chunk directly
+    if len(parts) < 2:
+        parts = re.findall(
+            r'(?:(?:1st|2nd|3rd|\d+th|Third|Second|First)\s+)?'
+            r'(?:Interim|Special|Final|Annual)?\s*'
+            r'(?:Interim|Special|Final|Annual)?\s*'
+            r'Dividend\s*[-\u2013]?\s*Rs\.?\s*[\d.]+(?:/-)?'
+            r'\s*Per\s+(?:Equity\s+)?Share(?:\s*\(Purpose\s+Revised\))?',
+            purpose,
+            flags=re.IGNORECASE
+        )
+
+    rows = []
+    for part in parts:
+        part = part.strip()
+        amt_match = re.search(r"Rs\.?\s*([\d.]+)", part, re.IGNORECASE)
+        if not amt_match:
+            continue  # skip parts with no Rs amount
+
+        new_row = row.copy()
+        new_row[purpose_col] = part
+        new_row["_amount"] = float(amt_match.group(1))
+
+        # Classify type
+        p_lower = part.lower()
+        if "special" in p_lower:
+            new_row["_type"] = "Special"
+        elif "interim" in p_lower:
+            new_row["_type"] = "Interim"
+        elif any(k in p_lower for k in ["final", "annual", "agm"]):
+            new_row["_type"] = "Final/Annual"
+        else:
+            new_row["_type"] = "Dividend"
+
+        rows.append(new_row)
+
+    # Absolute fallback: return original row untouched
+    if not rows:
+        amt_match = re.search(r"Rs\.?\s*([\d.]+)", purpose, re.IGNORECASE)
+        row["_amount"] = float(amt_match.group(1)) if amt_match else 0.0
+        row["_type"] = "Dividend"
+        rows = [row]
+
+    return rows
+
+async def fetch_dividend_values(data):
+    df = pd.DataFrame(data)
+
+    # ── Auto-detect column names ─────────────────────────────────────────────
+    purpose_col = next((c for c in df.columns if any(k in c.lower() for k in ["subject", "purpose", "desc"])), None)
+    ex_date_col = next((c for c in df.columns if "ex" in c.lower() and "date" in c.lower()), None)
+    rec_date_col = next((c for c in df.columns if "rec" in c.lower() and "date" in c.lower()), None)
+    series_col = next((c for c in df.columns if "series" in c.lower()), None)
+    symbol_col = next((c for c in df.columns if "symbol" in c.lower()), None)
+
+    if purpose_col is None:
+        return df
+
+    # ── Filter dividends only ────────────────────────────────────────────────
+    mask = df[purpose_col].str.lower().str.contains(
+        "dividend|interim|special", na=False
+    )
+    df_div = df[mask].copy()
+
+    if df_div.empty:
+        return df_div
+
+    # ── Parse ex-date and sort ───────────────────────────────────────────────
+    if ex_date_col:
+        df_div[ex_date_col] = pd.to_datetime(
+            df_div[ex_date_col], errors="coerce", dayfirst=True
+        )
+        df_div = df_div.sort_values(ex_date_col, ascending=False)
+
+    # ── Split ALL combined entries into individual rows ──────────────────────
+    split_rows = []
+    for _, row in df_div.iterrows():
+        split_rows.extend(await split_purpose_into_rows(row, purpose_col))
+
+    df_split = pd.DataFrame(split_rows).reset_index(drop=True)
+
+    # ── Build final clean dataframe ──────────────────────────────────────────
+    col_map = {}
+    if symbol_col:   col_map[symbol_col] = "Symbol"
+    if series_col:   col_map[series_col] = "Series"
+    col_map[purpose_col] = "Purpose"
+    col_map["_type"] = "Type"
+    if ex_date_col:  col_map[ex_date_col] = "Ex-Date"
+    if rec_date_col: col_map[rec_date_col] = "Record Date"
+    col_map["_amount"] = "Amount (Rs)"
+
+    available = [c for c in col_map if c in df_split.columns]
+    df_final = df_split[available].rename(columns=col_map)
+
+    return df_final

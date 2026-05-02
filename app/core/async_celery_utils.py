@@ -3,13 +3,17 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from itertools import islice
 
-from sqlalchemy import select, or_, delete
+import pytz
+from bs4 import BeautifulSoup
+from sqlalchemy import select, or_, delete, and_, exists
 from sqlalchemy.orm import selectinload
 
+from app.apis.models.company import Company
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, QuarterlyResultDateset, \
-    ResultFormatEnum, ShareHoldingPeriod
+    ResultFormatEnum, ShareHoldingPeriod, BalanceSheetDataset, ProfitLossDataset, CashFlowDataset
 from app.core.logging_config import setup_logging
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, \
     fetch_bse_data, fetch_bse_exact_symbol_data_from_json
@@ -25,12 +29,18 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     save_multiple_government_shareholding, save_multiple_public_shareholding, \
     fetch_symbols_from_covered_symbol_json_for_shareholder_result, update_nse_bse_shareholder_save_processed_symbol, \
     save_bse_multiple_shareholding, save_bse_multiple_dii_shareholding, save_bse_multiple_fii_shareholding, \
-    save_bse_multiple_government_shareholding, save_bse_multiple_public_shareholding, to_year_month
+    save_bse_multiple_government_shareholding, save_bse_multiple_public_shareholding, to_year_month, \
+    parse_balance_sheet, make_short_company_name, find_by_scripcode, parse_profit_loss, parse_cash_flow, \
+    fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow, \
+    update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
+from scripts.fetch_balance_sheet_data import main_balance_sheet_html, main_find_company_json, \
+    main_balance_sheet_standalone_html
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
 from scripts.fetch_daily_listed_stocks import main_newly_listed_stocks
+from scripts.fetch_dividend_data_from_nse_bse import main_nse_corporate_action_call
 from scripts.fetch_integrated_filling_financials import main_fetch_integrated_filing_financials
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_fetch_shareholder_data import main_nse_fetch_shareholding_list, \
@@ -40,6 +50,7 @@ from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
 from scripts.nse_with_rotating_ip import main
 from scripts.bse import main as main_bse
 
+ist = pytz.timezone('Asia/Kolkata')
 
 setup_logging()
 special_logger = logging.getLogger("missing_symbols_logger")
@@ -1499,6 +1510,473 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                             unsaved_symbols.append(company.nse_symbol)
                             continue
                         processed_symbols.append(company.nse_symbol)
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    processed_symbols = []
+    file_name = "nse_bse_stocks_balance_sheet_and_profit_loss_and_cash_flow_data"
+    try:
+        pl_consolidated = (
+            select(ProfitLossDataset.id)
+            .where(ProfitLossDataset.company_id == CompanyStock.id)
+            .where(ProfitLossDataset.values["type"].astext == "Consolidated")
+            .correlate(CompanyStock)
+        )
+
+        bs_consolidated = (
+            select(BalanceSheetDataset.id)
+            .where(BalanceSheetDataset.company_id == CompanyStock.id)
+            .where(BalanceSheetDataset.values["type"].astext == "Consolidated")
+            .correlate(CompanyStock)
+        )
+
+        cf_consolidated = (
+            select(CashFlowDataset.id)
+            .where(CashFlowDataset.company_id == CompanyStock.id)
+            .where(CashFlowDataset.values["type"].astext == "Consolidated")
+            .correlate(CompanyStock)
+        )
+
+        stmt = (
+            select(CompanyStock)
+            .where(
+                ~and_(
+                    exists(pl_consolidated),
+                    exists(bs_consolidated),
+                    exists(cf_consolidated),
+                )
+            )
+            .options(
+                selectinload(CompanyStock.details),
+                selectinload(CompanyStock.profit_loss),
+                selectinload(CompanyStock.balance_sheet),
+                selectinload(CompanyStock.cash_flow),
+            )
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[:5]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        def get_consolidated(dataset_list):
+            for d in dataset_list:
+                values = json.loads(d.values) if isinstance(d.values, str) else d.values
+                if values.get("type") == "Consolidated":
+                    d._parsed_values = values
+                    return d
+            return None
+
+        for chunk in chunk_list(missing_symbols, 1):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    with db.begin_nested():
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        profit_loss = get_consolidated(company.profit_loss)
+                        balance_sheet = get_consolidated(company.balance_sheet)
+                        cash_flow = get_consolidated(company.cash_flow)
+                        if nse_company_list and bse_company_list:
+                            html_data = await main_balance_sheet_html(company.nse_symbol)
+                            soup = BeautifulSoup(html_data, "html.parser")
+                            if not balance_sheet:
+                                balance_sheet_data = await parse_balance_sheet(soup)
+                                balance_sheet_data.update({"type": "Consolidated"})
+                            if not profit_loss:
+                                profit_loss_data = await parse_profit_loss(soup)
+                                profit_loss_data.update({"type": "Consolidated"})
+                            if not cash_flow:
+                                cash_flow_data = await parse_cash_flow(soup)
+                                cash_flow_data.update({"type": "Consolidated"})
+                        elif nse_company_list:
+                            html_data = await main_balance_sheet_html(company.nse_symbol)
+                            soup = BeautifulSoup(html_data, "html.parser")
+                            if not balance_sheet:
+                                balance_sheet_data = await parse_balance_sheet(soup)
+                                balance_sheet_data.update({"type": "Consolidated"})
+                            if not profit_loss:
+                                profit_loss_data = await parse_profit_loss(soup)
+                                profit_loss_data.update({"type": "Consolidated"})
+                            if not cash_flow:
+                                cash_flow_data = await parse_cash_flow(soup)
+                                cash_flow_data.update({"type": "Consolidated"})
+                        elif bse_company_list:
+                            c_name = await make_short_company_name(company.name)
+                            c_list = await main_find_company_json(c_name)
+                            exact_company = await find_by_scripcode(c_list, company.bse_code)
+                            if exact_company:
+                                html_data = await main_balance_sheet_html(f"SCRIP-{exact_company.get("FINCODE")}")
+                                soup = BeautifulSoup(html_data, "html.parser")
+                                if not balance_sheet:
+                                    balance_sheet_data = await parse_balance_sheet(soup)
+                                    balance_sheet_data.update({"type": "Consolidated"})
+                                if not profit_loss:
+                                    profit_loss_data = await parse_profit_loss(soup)
+                                    profit_loss_data.update({"type": "Consolidated"})
+                                if not cash_flow:
+                                    cash_flow_data = await parse_cash_flow(soup)
+                                    cash_flow_data.update({"type": "Consolidated"})
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
+
+                        if not balance_sheet:
+                            balance_sheet_dataset_ops = BalanceSheetDataset(
+                                company_id=company.id,
+                                values=balance_sheet_data,
+                            )
+                            db.add(balance_sheet_dataset_ops)
+                            db.flush()
+
+                        if not profit_loss:
+                            profit_loss_dataset_ops = ProfitLossDataset(
+                                company_id=company.id,
+                                values=profit_loss_data,
+                            )
+                            db.add(profit_loss_dataset_ops)
+                            db.flush()
+
+                        if not cash_flow:
+                            profit_loss_dataset_ops = CashFlowDataset(
+                                company_id=company.id,
+                                values=cash_flow_data,
+                            )
+                            db.add(profit_loss_dataset_ops)
+                            db.flush()
+
+                        processed_symbols.append(company.nse_symbol)
+
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    processed_symbols = []
+    file_name = "nse_bse_stocks_balance_sheet_and_profit_loss_and_cash_flow_data_standalone"
+    try:
+        pl_standalone = (
+            select(ProfitLossDataset.id)
+            .where(ProfitLossDataset.company_id == CompanyStock.id)
+            .where(ProfitLossDataset.values["type"].astext == "Standalone")
+            .correlate(CompanyStock)
+        )
+
+        bs_standalone = (
+            select(BalanceSheetDataset.id)
+            .where(BalanceSheetDataset.company_id == CompanyStock.id)
+            .where(BalanceSheetDataset.values["type"].astext == "Standalone")
+            .correlate(CompanyStock)
+        )
+
+        cf_standalone = (
+            select(CashFlowDataset.id)
+            .where(CashFlowDataset.company_id == CompanyStock.id)
+            .where(CashFlowDataset.values["type"].astext == "Standalone")
+            .correlate(CompanyStock)
+        )
+
+        stmt = (
+            select(CompanyStock)
+            .where(
+                ~and_(
+                    exists(pl_standalone),
+                    exists(bs_standalone),
+                    exists(cf_standalone),
+                )
+            )
+            .options(
+                selectinload(CompanyStock.details),
+                selectinload(CompanyStock.profit_loss),
+                selectinload(CompanyStock.balance_sheet),
+                selectinload(CompanyStock.cash_flow),
+            )
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[:2]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        def get_consolidated(dataset_list):
+            for d in dataset_list:
+                values = json.loads(d.values) if isinstance(d.values, str) else d.values
+                if values.get("type") == "Standalone":
+                    d._parsed_values = values
+                    return d
+            return None
+
+        for chunk in chunk_list(missing_symbols, 1):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    with db.begin_nested():
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        profit_loss = get_consolidated(company.profit_loss)
+                        balance_sheet = get_consolidated(company.balance_sheet)
+                        cash_flow = get_consolidated(company.cash_flow)
+                        if nse_company_list and bse_company_list:
+                            html_data = await main_balance_sheet_standalone_html(company.nse_symbol)
+                            soup = BeautifulSoup(html_data, "html.parser")
+                            if not balance_sheet:
+                                balance_sheet_data = await parse_balance_sheet(soup)
+                                balance_sheet_data.update({"type": "Standalone"})
+                            if not profit_loss:
+                                profit_loss_data = await parse_profit_loss(soup)
+                                profit_loss_data.update({"type": "Standalone"})
+                            if not cash_flow:
+                                cash_flow_data = await parse_cash_flow(soup)
+                                cash_flow_data.update({"type": "Standalone"})
+                        elif nse_company_list:
+                            html_data = await main_balance_sheet_standalone_html(company.nse_symbol)
+                            soup = BeautifulSoup(html_data, "html.parser")
+                            if not balance_sheet:
+                                balance_sheet_data = await parse_balance_sheet(soup)
+                                balance_sheet_data.update({"type": "Standalone"})
+                            if not profit_loss:
+                                profit_loss_data = await parse_profit_loss(soup)
+                                profit_loss_data.update({"type": "Standalone"})
+                            if not cash_flow:
+                                cash_flow_data = await parse_cash_flow(soup)
+                                cash_flow_data.update({"type": "Standalone"})
+                        elif bse_company_list:
+                            c_name = await make_short_company_name(company.name)
+                            c_list = await main_find_company_json(c_name)
+                            exact_company = await find_by_scripcode(c_list, company.bse_code)
+                            if exact_company:
+                                html_data = await main_balance_sheet_standalone_html(f"SCRIP-{exact_company.get("FINCODE")}")
+                                soup = BeautifulSoup(html_data, "html.parser")
+                                if not balance_sheet:
+                                    balance_sheet_data = await parse_balance_sheet(soup)
+                                    balance_sheet_data.update({"type": "Standalone"})
+                                if not profit_loss:
+                                    profit_loss_data = await parse_profit_loss(soup)
+                                    profit_loss_data.update({"type": "Standalone"})
+                                if not cash_flow:
+                                    cash_flow_data = await parse_cash_flow(soup)
+                                    cash_flow_data.update({"type": "Standalone"})
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
+
+                        if not balance_sheet:
+                            balance_sheet_dataset_ops = BalanceSheetDataset(
+                                company_id=company.id,
+                                values=balance_sheet_data,
+                            )
+                            db.add(balance_sheet_dataset_ops)
+                            db.flush()
+
+                        if not profit_loss:
+                            profit_loss_dataset_ops = ProfitLossDataset(
+                                company_id=company.id,
+                                values=profit_loss_data,
+                            )
+                            db.add(profit_loss_dataset_ops)
+                            db.flush()
+
+                        if not cash_flow:
+                            profit_loss_dataset_ops = CashFlowDataset(
+                                company_id=company.id,
+                                values=cash_flow_data,
+                            )
+                            db.add(profit_loss_dataset_ops)
+                            db.flush()
+
+                        processed_symbols.append(company.nse_symbol)
+
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def fetch_calculate_and_update_stock_dividend_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    processed_symbols = []
+    file_name = "nse_bse_stocks_dividend"
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[3:5]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        def to_percentage(val):
+            return (Decimal(str(val)) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        for chunk in chunk_list(missing_symbols, 1):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    dividend_yield = None
+                    savepoint = db.begin_nested()
+                    try:
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        if nse_company_list and bse_company_list:
+                            nse_data = await main(company.nse_symbol)
+                            symbol_data = nse_data.get('symbolData')
+                            equity_response = symbol_data.get('equityResponse')[0]
+                            metaData = equity_response.get('metaData', {})
+                            close_price = metaData.get("closePrice")
+                            company_name = nse_company_list[0].get("company_name").replace(' ', '-')
+                            c_date = datetime.now(ist).date()
+                            one_year_ago = c_date.replace(year=c_date.year - 1)
+                            corporate_action_list = await main_nse_corporate_action_call(company.nse_symbol, company_name)
+                            filtered_corporate_action_list = [
+                               item for item in corporate_action_list
+                               if item['exDate'] and item['exDate'] != '-'
+                                  and one_year_ago <= ist.localize(
+                                   datetime.strptime(item['exDate'], '%d-%b-%Y')).date() <= c_date
+                            ]
+                            df_corporate_action = await fetch_dividend_values(filtered_corporate_action_list)
+                            if not df_corporate_action.empty:
+                                total_dividend = df_corporate_action['Amount (Rs)'].sum()
+                                dividend_yield = to_percentage((total_dividend / close_price))
+                        elif nse_company_list:
+                            nse_data = await main(company.nse_symbol)
+                            symbol_data = nse_data.get('symbolData')
+                            equity_response = symbol_data.get('equityResponse')[0]
+                            metaData = equity_response.get('metaData', {})
+                            close_price = metaData.get("closePrice")
+                            company_name = nse_company_list[0].get("company_name").replace(' ', '-')
+                            c_date = datetime.now(ist).date()
+                            one_year_ago = c_date.replace(year=c_date.year - 1)
+                            corporate_action_list = await main_nse_corporate_action_call(company.nse_symbol,
+                                                                                         company_name)
+                            filtered_corporate_action_list = [
+                                item for item in corporate_action_list
+                                if item['exDate'] and item['exDate'] != '-'
+                                   and one_year_ago <= ist.localize(
+                                    datetime.strptime(item['exDate'], '%d-%b-%Y')).date() <= c_date
+                            ]
+                            df_corporate_action = await fetch_dividend_values(filtered_corporate_action_list)
+                            if not df_corporate_action.empty:
+                                total_dividend = df_corporate_action['Amount (Rs)'].sum()
+                                dividend_yield = to_percentage((total_dividend / close_price))
+                        elif bse_company_list:
+                            pass
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
+                        company.details.dividend_yield = dividend_yield
+                        processed_symbols.append(company.nse_symbol)
+                    except Exception as e:
+                        savepoint.rollback()
+                        raise
 
                 except Exception as e:
                     print("Error:", str(e))
