@@ -15,6 +15,8 @@ celery_app.conf.update(
     enable_utc=True,
     task_soft_time_limit=10200,
     task_time_limit=10800,
+    worker_concurrency=2,
+    worker_prefetch_multiplier=1,
 )
 
 celery_app.autodiscover_tasks(["app.tasks"])
@@ -35,24 +37,24 @@ celery_app.conf.beat_schedule = {
     # },
     "fetch_30y_stock_chart_dat_from_nse_bse_new": {
             "task": "fetch_and_update_30y_stock_chart_data",
-            "schedule": crontab(minute="*/20"),
+            "schedule": crontab(minute=25),
         },
     "fetch_quarterly_result_data_from_nse_bse": {
         "task": "fetch_quarterly_result_data",
-        "schedule": crontab(minute="*/30"),
+        "schedule": crontab(minute=55),
     },
     "fetch_and_update_nse_bse_scrip_code": {
         "task": "update_nse_bse_scrip_code",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(minute="12,42"),
     },
     "fetch_and_update_nse_bse_stock_information": {
         "task": "update_nse_bse_stock_information",
-        "schedule": crontab(minute="*/7"),
+        "schedule": crontab(minute="5,20,35,50"),
     },
     "fetch_and_update_newly_company_data": {
         "task": "fetch_and_store_newly_company_data_from_nse_bse",
         "schedule": crontab(
-                minute=0,
+                minute=2,
                 hour="10,13,16,19",
                 day_of_week="mon-fri",  # Monday to Friday
         ),

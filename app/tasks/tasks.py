@@ -1,17 +1,45 @@
 import asyncio
+import uuid
 
 from sqlalchemy import select
 
 from app.apis.models.stock_data import CompanyStock
 from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async, \
     fetch_30y_stock_chart_data_async, fetch_and_update_30y_stock_chart_data_async, \
-    fetch_stock_quarterly_result_data_async, update_nse_bse_scrip_code_async, update_nse_bse_stock_information_async, \
-    fetch_and_store_newly_listed_company_data_from_nse_bse_async, fetch_and_update_stock_shareholding_pattern_data_async
-from app.core.utils import run_async_task
+    fetch_stock_quarterly_result_data_async,fetch_and_update_stock_shareholding_pattern_data_async, update_nse_bse_scrip_code_async, update_nse_bse_stock_information_async, fetch_and_store_newly_listed_company_data_from_nse_bse_async
 from app.db.postgres.sync_session import SessionLocalSync
+from app.db.redis.redis import redis_client
 from app.apis.models.company import Company
 from sqlalchemy.dialects.postgresql import insert
 from app.core.celery_app import celery_app
+
+
+TASK_LOCK_TTL_SECONDS = 11000
+
+
+def run_async_task(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
+def run_locked_async_task(lock_name, coro):
+    lock_key = f"celery-lock:{lock_name}"
+    lock_value = str(uuid.uuid4())
+    acquired = redis_client.set(lock_key, lock_value, nx=True, ex=TASK_LOCK_TTL_SECONDS)
+    if not acquired:
+        print(f"Skipping {lock_name}: previous run is still active")
+        return None
+
+    try:
+        return run_async_task(coro)
+    finally:
+        if redis_client.get(lock_key) == lock_value:
+            redis_client.delete(lock_key)
 
 
 @celery_app.task(
@@ -104,11 +132,7 @@ def fetch_and_store_company_data_from_top_50():
     from app.core.utils import load_angel_map
     load_angel_map()
     # asyncio.run(fetch_and_store_company_data_from_top_50_async())
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(fetch_and_store_company_data_from_top_50_async())
-    # loop.close()
-    run_async_task(fetch_and_store_company_data_from_top_50_async())
+    run_locked_async_task("fetch_and_store_company_data_from_top_50", fetch_and_store_company_data_from_top_50_async())
 
 
 @celery_app.task(
@@ -119,11 +143,7 @@ def fetch_30y_stock_chart_data():
     Background task to store NSE company data
     """
     # asyncio.run(fetch_30y_stock_chart_data_async())
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(fetch_30y_stock_chart_data_async())
-    # loop.close()
-    run_async_task(fetch_30y_stock_chart_data_async())
+    run_locked_async_task("fetch_30y_stock_chart_data", fetch_30y_stock_chart_data_async())
 
 
 @celery_app.task(
@@ -134,11 +154,7 @@ def fetch_and_update_30y_stock_chart_data():
     Background task to store NSE company data
     """
     # asyncio.run(fetch_and_update_30y_stock_chart_data_async())
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(fetch_and_update_30y_stock_chart_data_async())
-    # loop.close()
-    run_async_task(fetch_and_update_30y_stock_chart_data_async())
+    run_locked_async_task("fetch_and_update_30y_stock_chart_data", fetch_and_update_30y_stock_chart_data_async())
 
 @celery_app.task(
     name="fetch_quarterly_result_data",
@@ -147,11 +163,7 @@ def fetch_quarterly_result_data():
     """
     Background task to store NSE company data
     """
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(fetch_stock_quarterly_result_data_async())
-    # loop.close()
-    run_async_task(fetch_stock_quarterly_result_data_async())
+    run_locked_async_task("fetch_quarterly_result_data", fetch_stock_quarterly_result_data_async())
 
 @celery_app.task(
     name="update_nse_bse_scrip_code",
@@ -162,11 +174,7 @@ def update_nse_bse_scrip_code():
     """
     from app.core.utils import load_angel_map
     load_angel_map()
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(update_nse_bse_scrip_code_async())
-    # loop.close()
-    run_async_task(update_nse_bse_scrip_code_async())
+    run_locked_async_task("update_nse_bse_scrip_code", update_nse_bse_scrip_code_async())
 
 
 @celery_app.task(
@@ -176,11 +184,7 @@ def update_nse_bse_stock_information():
     """
     Background task to store NSE company data
     """
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(update_nse_bse_stock_information_async())
-    # loop.close()
-    run_async_task(update_nse_bse_stock_information_async())
+    run_locked_async_task("update_nse_bse_stock_information", update_nse_bse_stock_information_async())
 
 @celery_app.task(
     name="fetch_and_store_newly_company_data_from_nse_bse",
@@ -191,11 +195,10 @@ def fetch_and_store_newly_company_data_from_nse_bse():
     """
     from app.core.utils import load_angel_map
     load_angel_map()
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.run_until_complete(fetch_and_store_newly_listed_company_data_from_nse_bse_async())
-    # loop.close()
-    run_async_task(fetch_and_store_newly_listed_company_data_from_nse_bse_async())
+    run_locked_async_task(
+        "fetch_and_store_newly_company_data_from_nse_bse",
+        fetch_and_store_newly_listed_company_data_from_nse_bse_async()
+    )
 
 @celery_app.task(
     name="fetch_and_update_stock_shareholding_pattern_data",

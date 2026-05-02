@@ -15,8 +15,8 @@ class RawBSEClient:
     async def init(self):
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=7200,
-            limit=200,
-            limit_per_host=50,
+            limit=20,
+            limit_per_host=5,
             ssl=False,
             enable_cleanup_closed=True,
         )
@@ -91,11 +91,10 @@ class RawBSEClient:
 async def main_fetch_stock_price_for_bse_graph(scrip, days):
     client = RawBSEClient()
     await client.init()
-
-    data = await client.fetch_all(scrip, days)
-
-    await client.close()
-    return data
+    try:
+        return await client.fetch_all(scrip, days)
+    finally:
+        await client.close()
 
 
 import aiohttp
