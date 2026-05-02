@@ -9,7 +9,8 @@ from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50
     fetch_and_store_newly_listed_company_data_from_nse_bse_async, \
     fetch_and_update_stock_shareholding_pattern_data_async, \
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data_async, \
-    fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async
+    fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async, \
+    fetch_calculate_and_update_stock_dividend_data_async
 from app.core.utils import run_async_task
 from app.db.postgres.sync_session import SessionLocalSync
 from app.apis.models.company import Company
@@ -233,3 +234,12 @@ def fetch_and_update_stock_balance_sheet_standalone_data():
     Background task to store NSE company data
     """
     run_async_task(fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async())
+
+@celery_app.task(
+    name="fetch_calculate_and_update_stock_dividend_data",
+)
+def fetch_calculate_and_update_stock_dividend_data():
+    """
+    Background task to store NSE company data
+    """
+    run_async_task(fetch_calculate_and_update_stock_dividend_data_async())

@@ -68,5 +68,9 @@ celery_app.conf.beat_schedule = {
     "fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data": {
         "task": "fetch_and_update_stock_balance_sheet_standalone_data",
         "schedule": crontab(minute="*/17"),
+    },
+    "fetch_calculate_and_update_stock_dividend": {
+        "task": "fetch_calculate_and_update_stock_dividend_data",
+        "schedule": crontab(minute="*/12"),
     }
 }

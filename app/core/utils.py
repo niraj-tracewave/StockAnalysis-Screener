@@ -3800,3 +3800,122 @@ async def find_by_scripcode(results: list, scripcode: int) -> dict | None:
         if scripcode and item.get("SCRIPCODE") == int(scripcode):
             return item
     return None
+
+async def split_purpose_into_rows(row, purpose_col):
+    """
+    Extracts ALL individual dividend entries from a combined purpose string.
+    Works for 2, 3, 4 or more dividends in the same string.
+    """
+    purpose = str(row[purpose_col])
+
+    # Strategy 1: Split on explicit separators: '/', 'And', '+'
+    parts = re.split(r'\s*/\s*|\s+[Aa]nd\s+|\s+\+\s+', purpose)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    # Strategy 2: If still 1 part, split on keyword boundary after "Per Share"
+    # e.g. "Interim Dividend Rs 10 Per Share Special Dividend Rs 66 Per Share"
+    if len(parts) < 2:
+        # Insert a delimiter before each dividend keyword that follows "Share"
+        tagged = re.sub(
+            r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
+            r'\1|||',
+            purpose,
+            flags=re.IGNORECASE
+        )
+        parts = [p.strip() for p in tagged.split('|||') if p.strip()]
+
+    # Strategy 3: Regex — find every "Dividend Rs X Per Share" chunk directly
+    if len(parts) < 2:
+        parts = re.findall(
+            r'(?:(?:1st|2nd|3rd|\d+th|Third|Second|First)\s+)?'
+            r'(?:Interim|Special|Final|Annual)?\s*'
+            r'(?:Interim|Special|Final|Annual)?\s*'
+            r'Dividend\s*[-\u2013]?\s*Rs\.?\s*[\d.]+(?:/-)?'
+            r'\s*Per\s+(?:Equity\s+)?Share(?:\s*\(Purpose\s+Revised\))?',
+            purpose,
+            flags=re.IGNORECASE
+        )
+
+    rows = []
+    for part in parts:
+        part = part.strip()
+        amt_match = re.search(r"Rs\.?\s*([\d.]+)", part, re.IGNORECASE)
+        if not amt_match:
+            continue  # skip parts with no Rs amount
+
+        new_row = row.copy()
+        new_row[purpose_col] = part
+        new_row["_amount"] = float(amt_match.group(1))
+
+        # Classify type
+        p_lower = part.lower()
+        if "special" in p_lower:
+            new_row["_type"] = "Special"
+        elif "interim" in p_lower:
+            new_row["_type"] = "Interim"
+        elif any(k in p_lower for k in ["final", "annual", "agm"]):
+            new_row["_type"] = "Final/Annual"
+        else:
+            new_row["_type"] = "Dividend"
+
+        rows.append(new_row)
+
+    # Absolute fallback: return original row untouched
+    if not rows:
+        amt_match = re.search(r"Rs\.?\s*([\d.]+)", purpose, re.IGNORECASE)
+        row["_amount"] = float(amt_match.group(1)) if amt_match else 0.0
+        row["_type"] = "Dividend"
+        rows = [row]
+
+    return rows
+
+async def fetch_dividend_values(data):
+    df = pd.DataFrame(data)
+
+    # ── Auto-detect column names ─────────────────────────────────────────────
+    purpose_col = next((c for c in df.columns if any(k in c.lower() for k in ["subject", "purpose", "desc"])), None)
+    ex_date_col = next((c for c in df.columns if "ex" in c.lower() and "date" in c.lower()), None)
+    rec_date_col = next((c for c in df.columns if "rec" in c.lower() and "date" in c.lower()), None)
+    series_col = next((c for c in df.columns if "series" in c.lower()), None)
+    symbol_col = next((c for c in df.columns if "symbol" in c.lower()), None)
+
+    if purpose_col is None:
+        return df
+
+    # ── Filter dividends only ────────────────────────────────────────────────
+    mask = df[purpose_col].str.lower().str.contains(
+        "dividend|interim|special", na=False
+    )
+    df_div = df[mask].copy()
+
+    if df_div.empty:
+        return df_div
+
+    # ── Parse ex-date and sort ───────────────────────────────────────────────
+    if ex_date_col:
+        df_div[ex_date_col] = pd.to_datetime(
+            df_div[ex_date_col], errors="coerce", dayfirst=True
+        )
+        df_div = df_div.sort_values(ex_date_col, ascending=False)
+
+    # ── Split ALL combined entries into individual rows ──────────────────────
+    split_rows = []
+    for _, row in df_div.iterrows():
+        split_rows.extend(await split_purpose_into_rows(row, purpose_col))
+
+    df_split = pd.DataFrame(split_rows).reset_index(drop=True)
+
+    # ── Build final clean dataframe ──────────────────────────────────────────
+    col_map = {}
+    if symbol_col:   col_map[symbol_col] = "Symbol"
+    if series_col:   col_map[series_col] = "Series"
+    col_map[purpose_col] = "Purpose"
+    col_map["_type"] = "Type"
+    if ex_date_col:  col_map[ex_date_col] = "Ex-Date"
+    if rec_date_col: col_map[rec_date_col] = "Record Date"
+    col_map["_amount"] = "Amount (Rs)"
+
+    available = [c for c in col_map if c in df_split.columns]
+    df_final = df_split[available].rename(columns=col_map)
+
+    return df_final

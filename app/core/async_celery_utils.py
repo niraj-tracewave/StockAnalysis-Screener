@@ -3,8 +3,10 @@ import json
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from itertools import islice
 
+import pytz
 from bs4 import BeautifulSoup
 from sqlalchemy import select, or_, delete, and_, exists
 from sqlalchemy.orm import selectinload
@@ -30,7 +32,7 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     save_bse_multiple_government_shareholding, save_bse_multiple_public_shareholding, to_year_month, \
     parse_balance_sheet, make_short_company_name, find_by_scripcode, parse_profit_loss, parse_cash_flow, \
     fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow, \
-    update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol
+    update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
@@ -38,6 +40,7 @@ from scripts.fetch_balance_sheet_data import main_balance_sheet_html, main_find_
     main_balance_sheet_standalone_html
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
 from scripts.fetch_daily_listed_stocks import main_newly_listed_stocks
+from scripts.fetch_dividend_data_from_nse_bse import main_nse_corporate_action_call
 from scripts.fetch_integrated_filling_financials import main_fetch_integrated_filing_financials
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_fetch_shareholder_data import main_nse_fetch_shareholding_list, \
@@ -47,6 +50,7 @@ from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
 from scripts.nse_with_rotating_ip import main
 from scripts.bse import main as main_bse
 
+ist = pytz.timezone('Asia/Kolkata')
 
 setup_logging()
 special_logger = logging.getLogger("missing_symbols_logger")
@@ -1844,6 +1848,123 @@ async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_
 
                         processed_symbols.append(company.nse_symbol)
 
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def fetch_calculate_and_update_stock_dividend_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    processed_symbols = []
+    file_name = "nse_bse_stocks_dividend"
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[3:5]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        def to_percentage(val):
+            return (Decimal(str(val)) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        for chunk in chunk_list(missing_symbols, 1):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    dividend_yield = None
+                    savepoint = db.begin_nested()
+                    try:
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        if nse_company_list and bse_company_list:
+                            nse_data = await main(company.nse_symbol)
+                            symbol_data = nse_data.get('symbolData')
+                            equity_response = symbol_data.get('equityResponse')[0]
+                            metaData = equity_response.get('metaData', {})
+                            close_price = metaData.get("closePrice")
+                            company_name = nse_company_list[0].get("company_name").replace(' ', '-')
+                            c_date = datetime.now(ist).date()
+                            one_year_ago = c_date.replace(year=c_date.year - 1)
+                            corporate_action_list = await main_nse_corporate_action_call(company.nse_symbol, company_name)
+                            filtered_corporate_action_list = [
+                               item for item in corporate_action_list
+                               if item['exDate'] and item['exDate'] != '-'
+                                  and one_year_ago <= ist.localize(
+                                   datetime.strptime(item['exDate'], '%d-%b-%Y')).date() <= c_date
+                            ]
+                            df_corporate_action = await fetch_dividend_values(filtered_corporate_action_list)
+                            if not df_corporate_action.empty:
+                                total_dividend = df_corporate_action['Amount (Rs)'].sum()
+                                dividend_yield = to_percentage((total_dividend / close_price))
+                        elif nse_company_list:
+                            nse_data = await main(company.nse_symbol)
+                            symbol_data = nse_data.get('symbolData')
+                            equity_response = symbol_data.get('equityResponse')[0]
+                            metaData = equity_response.get('metaData', {})
+                            close_price = metaData.get("closePrice")
+                            company_name = nse_company_list[0].get("company_name").replace(' ', '-')
+                            c_date = datetime.now(ist).date()
+                            one_year_ago = c_date.replace(year=c_date.year - 1)
+                            corporate_action_list = await main_nse_corporate_action_call(company.nse_symbol,
+                                                                                         company_name)
+                            filtered_corporate_action_list = [
+                                item for item in corporate_action_list
+                                if item['exDate'] and item['exDate'] != '-'
+                                   and one_year_ago <= ist.localize(
+                                    datetime.strptime(item['exDate'], '%d-%b-%Y')).date() <= c_date
+                            ]
+                            df_corporate_action = await fetch_dividend_values(filtered_corporate_action_list)
+                            if not df_corporate_action.empty:
+                                total_dividend = df_corporate_action['Amount (Rs)'].sum()
+                                dividend_yield = to_percentage((total_dividend / close_price))
+                        elif bse_company_list:
+                            pass
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
+                        company.details.dividend_yield = dividend_yield
+                        processed_symbols.append(company.nse_symbol)
+                    except Exception as e:
+                        savepoint.rollback()
+                        raise
 
                 except Exception as e:
                     print("Error:", str(e))
