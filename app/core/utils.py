@@ -3801,70 +3801,242 @@ async def find_by_scripcode(results: list, scripcode: int) -> dict | None:
             return item
     return None
 
+# async def split_purpose_into_rows(row, purpose_col):
+#     """
+#     Extracts ALL individual dividend entries from a combined purpose string.
+#     Works for 2, 3, 4 or more dividends in the same string.
+#     """
+#     purpose = str(row[purpose_col])
+#
+#     # Strategy 1: Split on explicit separators: '/', 'And', '+'
+#     parts = re.split(r'\s*/\s*|\s+[Aa]nd\s+|\s+\+\s+', purpose)
+#     parts = [p.strip() for p in parts if p.strip()]
+#
+#     # Strategy 2: If still 1 part, split on keyword boundary after "Per Share"
+#     # e.g. "Interim Dividend Rs 10 Per Share Special Dividend Rs 66 Per Share"
+#     if len(parts) < 2:
+#         # Insert a delimiter before each dividend keyword that follows "Share"
+#         tagged = re.sub(
+#             r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
+#             r'\1|||',
+#             purpose,
+#             flags=re.IGNORECASE
+#         )
+#         parts = [p.strip() for p in tagged.split('|||') if p.strip()]
+#
+#     # Strategy 3: Regex — find every "Dividend Rs X Per Share" chunk directly
+#     if len(parts) < 2:
+#         parts = re.findall(
+#             r'(?:(?:1st|2nd|3rd|\d+th|Third|Second|First)\s+)?'
+#             r'(?:Interim|Special|Final|Annual)?\s*'
+#             r'(?:Interim|Special|Final|Annual)?\s*'
+#             r'Dividend\s*[-\u2013]?\s*Rs\.?\s*[\d.]+(?:/-)?'
+#             r'\s*Per\s+(?:Equity\s+)?Share(?:\s*\(Purpose\s+Revised\))?',
+#             purpose,
+#             flags=re.IGNORECASE
+#         )
+#
+#     rows = []
+#     for part in parts:
+#         part = part.strip()
+#         amt_match = re.search(r"Rs\.?\s*([\d.]+)", part, re.IGNORECASE)
+#         if not amt_match:
+#             continue  # skip parts with no Rs amount
+#
+#         new_row = row.copy()
+#         new_row[purpose_col] = part
+#         new_row["_amount"] = float(amt_match.group(1))
+#
+#         # Classify type
+#         p_lower = part.lower()
+#         if "special" in p_lower:
+#             new_row["_type"] = "Special"
+#         elif "interim" in p_lower:
+#             new_row["_type"] = "Interim"
+#         elif any(k in p_lower for k in ["final", "annual", "agm"]):
+#             new_row["_type"] = "Final/Annual"
+#         else:
+#             new_row["_type"] = "Dividend"
+#
+#         rows.append(new_row)
+#
+#     # Absolute fallback: return original row untouched
+#     if not rows:
+#         amt_match = re.search(r"Rs\.?\s*([\d.]+)", purpose, re.IGNORECASE)
+#         row["_amount"] = float(amt_match.group(1)) if amt_match else 0.0
+#         row["_type"] = "Dividend"
+#         rows = [row]
+#
+#     return rows
+
+# async def split_purpose_into_rows(row, purpose_col):
+#     purpose = str(row[purpose_col]).strip()
+#     parts = await _split_purpose(purpose)
+#
+#     rows = []
+#     for part in parts:
+#         part = part.strip()
+#         # BSE format: "Dividend - Rs. - 4.2500" (dash before number)
+#         # Legacy format: "Dividend Rs 5 Per Share"
+#         amt_match = re.search(r"Rs\.?\s*[-\u2013]?\s*([\d.]+)", part, re.IGNORECASE)
+#         if not amt_match:
+#             continue
+#
+#         new_row = row.copy()
+#         new_row[purpose_col] = part
+#         new_row["_amount"] = float(amt_match.group(1))
+#
+#         p_lower = part.lower()
+#         if new_row["_amount"] == 0 or "nil" in p_lower:
+#             new_row["_type"] = "NIL"
+#         elif "special" in p_lower:
+#             new_row["_type"] = "Special"
+#         elif "interim" in p_lower:
+#             new_row["_type"] = "Interim"
+#         elif any(k in p_lower for k in ["final", "annual", "agm"]):
+#             new_row["_type"] = "Final/Annual"
+#         else:
+#             new_row["_type"] = "Dividend"
+#
+#         rows.append(new_row)
+#
+#     if not rows:
+#         amt_match = re.search(r"Rs\.?\s*[-\u2013]?\s*([\d.]+)", purpose, re.IGNORECASE)
+#         row["_amount"] = float(amt_match.group(1)) if amt_match else 0.0
+#         row["_type"] = "Dividend"
+#         rows = [row]
+#
+#     return rows
+#
+#
+# async def _split_purpose(s):
+#     """Split a combined purpose string into individual dividend parts."""
+#
+#     # Strategy 1: slash-split — only when BOTH sides look like dividend entries
+#     slash_parts = re.split(r'\s*/\s*', s)
+#     dividend_like = lambda p: bool(re.search(r'dividend', p, re.IGNORECASE))
+#     if len(slash_parts) >= 2 and sum(dividend_like(p) for p in slash_parts) >= 2:
+#         return [p for p in slash_parts if dividend_like(p) or re.search(r'Rs', p, re.IGNORECASE)]
+#
+#     # Strategy 2: "And" / "+" separators
+#     and_parts = re.split(r'\s+[Aa]nd\s+|\s+\+\s+', s)
+#     if len(and_parts) >= 2 and all(
+#         re.search(r'Rs|dividend', p, re.IGNORECASE) for p in and_parts
+#     ):
+#         return and_parts
+#
+#     # Strategy 3: boundary after "Per Share" before next dividend keyword
+#     tagged = re.sub(
+#         r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
+#         r'\1|||',
+#         s, flags=re.IGNORECASE
+#     )
+#     tag_parts = [p.strip() for p in tagged.split('|||') if p.strip()]
+#     if len(tag_parts) >= 2:
+#         return tag_parts
+#
+#     # Strategy 4: direct regex match — handles BSE "Rs. - N.NNNN" format
+#     bse_rx = re.compile(
+#         r'(?:(?:1st|2nd|3rd|\d+th|First|Second|Third)\s+)?'
+#         r'(?:Nil\s+)?(?:Interim|Special|Final|Annual|AGM)?\s*'
+#         r'(?:Interim|Special|Final|Annual)?\s*'
+#         r'Dividend\s*[-\u2013]?\s*Rs\.?\s*[-\u2013]?\s*[\d.]+'
+#         r'(?:/-)?(?:\s*Per\s+(?:Equity\s+)?Share)?'
+#         r'(?:\s*\(Purpose\s+Revised\))?',
+#         re.IGNORECASE
+#     )
+#     matches = bse_rx.findall(s)
+#     if len(matches) >= 2:
+#         return matches
+#
+#     return [s]
+
+AMOUNT_RE = re.compile(
+    r"(?:Rs\.?|Re\.?|INR)\s*[-\u2013]?\s*([\d.]+)",
+    re.IGNORECASE
+)
+
+DIVIDEND_SPLIT_RX = re.compile(
+    r'(?:(?:1st|2nd|3rd|\d+th|First|Second|Third)\s+)?'
+    r'(?:Nil\s+)?(?:Interim|Special|Final|Annual|AGM)?\s*'
+    r'(?:Interim|Special|Final|Annual)?\s*'
+    r'Dividend\s*[-\u2013]?\s*(?:Rs\.?|Re\.?|INR)\s*[-\u2013]?\s*[\d.]+'
+    r'(?:/-)?(?:\s*Per\s+(?:Equity\s+)?Share)?'
+    r'(?:\s*\(Purpose\s+Revised\))?',
+    re.IGNORECASE
+)
+
+async def _has_amount(p):
+    return bool(AMOUNT_RE.search(p))
+
+async def _dividend_like(p):
+    return bool(re.search(r'dividend', p, re.IGNORECASE))
+
+async def _classify_type(p_lower, amount):
+    if amount == 0 or "nil" in p_lower:
+        return "NIL"
+    if "special" in p_lower:
+        return "Special"
+    if "interim" in p_lower:
+        return "Interim"
+    if any(k in p_lower for k in ["final", "annual", "agm"]):
+        return "Final/Annual"
+    return "Dividend"
+
+
+async def _split_purpose(s):
+    # Strategy 1: slash-split — only when BOTH sides look like dividend entries
+    slash_parts = re.split(r'\s*/\s*', s)
+    if len(slash_parts) >= 2 and sum(await _dividend_like(p) for p in slash_parts) >= 2:
+        return [p for p in slash_parts if await _dividend_like(p) or await _has_amount(p)]
+
+    # Strategy 2: "And" / "+" separators
+    and_parts = re.split(r'\s+[Aa]nd\s+|\s+\+\s+', s)
+    if len(and_parts) >= 2 and all(
+        await _has_amount(p) or await _dividend_like(p) for p in and_parts
+    ):
+        return and_parts
+
+    # Strategy 3: boundary after "Per Share" before next dividend keyword
+    tagged = re.sub(
+        r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
+        r'\1|||',
+        s, flags=re.IGNORECASE
+    )
+    tag_parts = [p.strip() for p in tagged.split('|||') if p.strip()]
+    if len(tag_parts) >= 2:
+        return tag_parts
+
+    # Strategy 4: direct regex — handles BSE "Rs./Re. - N.NNNN" and "Re 0.50 Per Share"
+    matches = DIVIDEND_SPLIT_RX.findall(s)
+    if len(matches) >= 2:
+        return matches
+
+    return [s]
+
+
 async def split_purpose_into_rows(row, purpose_col):
-    """
-    Extracts ALL individual dividend entries from a combined purpose string.
-    Works for 2, 3, 4 or more dividends in the same string.
-    """
-    purpose = str(row[purpose_col])
-
-    # Strategy 1: Split on explicit separators: '/', 'And', '+'
-    parts = re.split(r'\s*/\s*|\s+[Aa]nd\s+|\s+\+\s+', purpose)
-    parts = [p.strip() for p in parts if p.strip()]
-
-    # Strategy 2: If still 1 part, split on keyword boundary after "Per Share"
-    # e.g. "Interim Dividend Rs 10 Per Share Special Dividend Rs 66 Per Share"
-    if len(parts) < 2:
-        # Insert a delimiter before each dividend keyword that follows "Share"
-        tagged = re.sub(
-            r'(Per\s+(?:Equity\s+)?Share\.?)\s+(?=(?:Interim|Special|Final|Annual|Dividend)\b)',
-            r'\1|||',
-            purpose,
-            flags=re.IGNORECASE
-        )
-        parts = [p.strip() for p in tagged.split('|||') if p.strip()]
-
-    # Strategy 3: Regex — find every "Dividend Rs X Per Share" chunk directly
-    if len(parts) < 2:
-        parts = re.findall(
-            r'(?:(?:1st|2nd|3rd|\d+th|Third|Second|First)\s+)?'
-            r'(?:Interim|Special|Final|Annual)?\s*'
-            r'(?:Interim|Special|Final|Annual)?\s*'
-            r'Dividend\s*[-\u2013]?\s*Rs\.?\s*[\d.]+(?:/-)?'
-            r'\s*Per\s+(?:Equity\s+)?Share(?:\s*\(Purpose\s+Revised\))?',
-            purpose,
-            flags=re.IGNORECASE
-        )
+    purpose = str(row[purpose_col]).strip()
+    parts = await _split_purpose(purpose)
 
     rows = []
     for part in parts:
         part = part.strip()
-        amt_match = re.search(r"Rs\.?\s*([\d.]+)", part, re.IGNORECASE)
+        amt_match = AMOUNT_RE.search(part)
         if not amt_match:
-            continue  # skip parts with no Rs amount
+            continue
 
         new_row = row.copy()
         new_row[purpose_col] = part
         new_row["_amount"] = float(amt_match.group(1))
-
-        # Classify type
-        p_lower = part.lower()
-        if "special" in p_lower:
-            new_row["_type"] = "Special"
-        elif "interim" in p_lower:
-            new_row["_type"] = "Interim"
-        elif any(k in p_lower for k in ["final", "annual", "agm"]):
-            new_row["_type"] = "Final/Annual"
-        else:
-            new_row["_type"] = "Dividend"
-
+        new_row["_type"] = await _classify_type(part.lower(), new_row["_amount"])
         rows.append(new_row)
 
-    # Absolute fallback: return original row untouched
+    # Fallback: return original row with best-effort parse
     if not rows:
-        amt_match = re.search(r"Rs\.?\s*([\d.]+)", purpose, re.IGNORECASE)
+        amt_match = AMOUNT_RE.search(purpose)
         row["_amount"] = float(amt_match.group(1)) if amt_match else 0.0
-        row["_type"] = "Dividend"
+        row["_type"] = await _classify_type(purpose.lower(), row["_amount"])
         rows = [row]
 
     return rows

@@ -40,7 +40,7 @@ from scripts.fetch_balance_sheet_data import main_balance_sheet_html, main_find_
     main_balance_sheet_standalone_html
 from scripts.fetch_bse_integrated_filling_financials import main_bse_fetch_integrated_filing_financials
 from scripts.fetch_daily_listed_stocks import main_newly_listed_stocks
-from scripts.fetch_dividend_data_from_nse_bse import main_nse_corporate_action_call
+from scripts.fetch_dividend_data_from_nse_bse import main_nse_corporate_action_call, main_bse_corporate_action_call
 from scripts.fetch_integrated_filling_financials import main_fetch_integrated_filing_financials
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_fetch_shareholder_data import main_nse_fetch_shareholding_list, \
@@ -1905,7 +1905,7 @@ async def fetch_calculate_and_update_stock_dividend_data_async():
             c for c in companies if c.nse_symbol not in existing_symbols
         ]
 
-        missing_symbols = missing_symbols[3:5]
+        missing_symbols = missing_symbols[:5]
 
         current_processed_symbols = [c.nse_symbol for c in missing_symbols]
         await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
@@ -1931,7 +1931,8 @@ async def fetch_calculate_and_update_stock_dividend_data_async():
                             symbol_data = nse_data.get('symbolData')
                             equity_response = symbol_data.get('equityResponse')[0]
                             metaData = equity_response.get('metaData', {})
-                            close_price = metaData.get("closePrice")
+                            tradeInfo = equity_response.get('tradeInfo', {})
+                            close_price = metaData.get("closePrice") or tradeInfo.get("lastPrice")
                             company_name = nse_company_list[0].get("company_name").replace(' ', '-')
                             c_date = datetime.now(ist).date()
                             one_year_ago = c_date.replace(year=c_date.year - 1)
@@ -1951,7 +1952,8 @@ async def fetch_calculate_and_update_stock_dividend_data_async():
                             symbol_data = nse_data.get('symbolData')
                             equity_response = symbol_data.get('equityResponse')[0]
                             metaData = equity_response.get('metaData', {})
-                            close_price = metaData.get("closePrice")
+                            tradeInfo = equity_response.get('tradeInfo', {})
+                            close_price = metaData.get("closePrice") or tradeInfo.get("lastPrice")
                             company_name = nse_company_list[0].get("company_name").replace(' ', '-')
                             c_date = datetime.now(ist).date()
                             one_year_ago = c_date.replace(year=c_date.year - 1)
@@ -1968,7 +1970,25 @@ async def fetch_calculate_and_update_stock_dividend_data_async():
                                 total_dividend = df_corporate_action['Amount (Rs)'].sum()
                                 dividend_yield = to_percentage((total_dividend / close_price))
                         elif bse_company_list:
-                            pass
+                            security_code = bse_company_list[0].get("bse_code")
+                            bse_data = await main_bse(security_code)
+                            price_graph = bse_data.get('priceGraph')
+                            current_price = price_graph.get('CurrVal')
+                            if current_price:
+                                current_price = float(current_price)
+                            c_date = datetime.now(ist).date()
+                            one_year_ago = c_date.replace(year=c_date.year - 1)
+                            corporate_action_list = await main_bse_corporate_action_call(company.bse_code)
+                            filtered_corporate_action_list = [
+                                item for item in corporate_action_list
+                                if item['Ex_date'] and item['Ex_date'] != '-'
+                                   and one_year_ago <= ist.localize(
+                                    datetime.strptime(item['Ex_date'], '%d %b %Y')).date() <= c_date
+                            ]
+                            df_corporate_action = await fetch_dividend_values(filtered_corporate_action_list)
+                            if not df_corporate_action.empty:
+                                total_dividend = df_corporate_action['Amount (Rs)'].sum()
+                                dividend_yield = to_percentage((total_dividend / current_price))
                         else:
                             unsaved_symbols.append(company.nse_symbol)
                             continue
