@@ -4091,3 +4091,129 @@ async def fetch_dividend_values(data):
     df_final = df_split[available].rename(columns=col_map)
 
     return df_final
+
+
+async def fetch_li_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+
+    if li_table is None:
+        return result
+
+    rows = li_table.find_all("tr")
+
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+
+
+        if ths and tds:
+            label = None
+            for th in ths:
+                text = th.get_text(strip=True)
+                if text and not text.isdigit():
+                    label = text
+                    break
+
+            if label is None:
+                continue
+
+            value = tds[-1].get_text(strip=True)
+            if label and value:
+                result[label] = value
+
+    return result
+
+async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/",
+            "Connection": "keep-alive"
+        }
+
+        # first hit homepage to get cookies
+        session.get("https://www.nseindia.com", headers=headers)
+
+        path = url.split("nsearchives.nseindia.com")[-1]
+
+        headers = {
+            "authority": "nsearchives.nseindia.com",
+            "method": "GET",
+            "path": path,
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "if-none-match": "W/\"46855-1768223605988\"",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            heading = soup.find("h3", string=lambda x: x and "General information" in x)
+            gITable = heading.find_next("table")
+            table_data = await extract_table_as_dict(soup, gITable)
+            value = table_data.get("Level of rounding used in financial results", "Crores")
+
+            if "_LI_" in url:
+                target_table = None
+                target_heading = "Format for financial results by life insurance companies filed with stock exchanges"
+
+                if value == "Crores":
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and target_heading in h3.get_text(" ", strip=True):
+                                table_text = table.get_text()
+                                if "Sources of Funds" in table_text:
+                                    target_table = table
+                                    break
+
+                                break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Format for financial results by life insurance" in x)
+                        if h3:
+                            # Verify the next sibling table actually has "Sources of Funds"
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Sources of Funds" in table_text:
+                                    target_table = next_table
+                                    break
+                result = await fetch_li_key_values(target_table)
+                return result, value, "LI"
+
+
+        return structured_with_values, None, None
+    except Exception as e:
+        return [], None, None
