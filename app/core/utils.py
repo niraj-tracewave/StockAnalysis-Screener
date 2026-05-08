@@ -4127,6 +4127,49 @@ async def fetch_li_key_values(li_table):
 
     return result
 
+async def fetch_indas_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+    if li_table is None:
+        return result
+    rows = li_table.find_all("tr")
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+        if ths and tds:
+            label = None
+            for th in ths:
+                print(th, "--hh--")
+                # Handle text inside <b> tag or direct text
+                b_tag = th.find("b")
+                if b_tag:
+                    text = b_tag.get_text(strip=True)
+                    print(text, "----b-------")
+                else:
+                    text = th.get_text(strip=True)
+                    print(text, "--tt--")
+                if text and not text.isdigit():
+                    label = text
+                    break
+                print("----------------------")
+
+            if label is None:
+                continue
+            print(label, "-----fff---fff----")
+            # Handle value inside <b> tag or direct text
+            last_td = tds[-1]
+            b_tag = last_td.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_td.get_text(strip=True)
+            if label and value:
+                result[label] = value
+    return result
+
 async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
     try:
         structured_with_values = []
@@ -4212,6 +4255,36 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                     break
                 result = await fetch_li_key_values(target_table)
                 return result, value, "LI"
+
+            elif "INDAS" in url:
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
+                                break
+                        if target_table:
+                            break
+                    result = await fetch_indas_key_values(target_table)
+                else:
+                    asset_heading = soup.find("h3",string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                    if asset_heading:
+                        for sibling in asset_heading.find_all_next("table"):
+                            classes = sibling.get("class", [])
+                            if "gridtable" in classes and "stockExchnageTableLastColwidth" in classes:
+                                target_table = sibling
+                                break
+                    result = await fetch_li_key_values(target_table)
+                print(result)
+                return result, value, "INDAS"
 
 
         return structured_with_values, None, None
