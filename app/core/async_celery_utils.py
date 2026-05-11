@@ -2095,7 +2095,7 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                     elif consolidated == "Standalone":
                                         standalone_list.append(integrated_filing_obj)
                                 if consolidated_list:
-                                    for i in consolidated_list[4:]:
+                                    for i in consolidated_list:
                                         ixbrl = i.get("ixbrl")
                                         qe_Date = i.get("qe_Date")
                                         output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(

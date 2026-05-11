@@ -4136,38 +4136,67 @@ async def fetch_indas_key_values(li_table):
     if li_table is None:
         return result
     rows = li_table.find_all("tr")
+    main_heading = None
+    heading_mapping = {
+        "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+        "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+        "Total Trade payable": "Total Trade payable, current"
+    }
     for tr in rows:
         ths = tr.find_all("th")
         tds = tr.find_all("td")
-        if ths and tds:
-            label = None
-            for th in ths:
-                print(th, "--hh--")
+        # if ths and tds:
+        label = None
+        for th in ths:
+            # Handle text inside <b> tag or direct text
+            b_tag = th.find("b")
+            if b_tag:
+                text = b_tag.get_text(strip=True)
+            else:
+                text = th.get_text(strip=True)
+            if text and not text.isdigit():
+                label = text
+                break
+        if label is None:
+            for th in tds:
                 # Handle text inside <b> tag or direct text
                 b_tag = th.find("b")
                 if b_tag:
                     text = b_tag.get_text(strip=True)
-                    print(text, "----b-------")
                 else:
                     text = th.get_text(strip=True)
-                    print(text, "--tt--")
                 if text and not text.isdigit():
                     label = text
                     break
-                print("----------------------")
 
-            if label is None:
-                continue
-            print(label, "-----fff---fff----")
-            # Handle value inside <b> tag or direct text
+        if label is None:
+            continue
+
+        if label == "Current liabilities":
+            main_heading = label
+        # Handle value inside <b> tag or direct text
+        value = None
+        if tds:
             last_td = tds[-1]
             b_tag = last_td.find("b")
             if b_tag:
                 value = b_tag.get_text(strip=True)
             else:
                 value = last_td.get_text(strip=True)
-            if label and value:
-                result[label] = value
+
+            # if label and value:
+        if value is None and ths:
+            last_td = ths[-1]
+            b_tag = last_td.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_td.get_text(strip=True)
+
+        if main_heading == "Current liabilities":
+            label = heading_mapping.get(label, label)
+
+        result[label] = value
     return result
 
 async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
@@ -4283,8 +4312,22 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                 target_table = sibling
                                 break
                     result = await fetch_li_key_values(target_table)
-                print(result)
                 return result, value, "INDAS"
+            elif "BANKING" in url:
+                flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                for div in reversed(flex_divs):
+                    h3 = div.find("h3",
+                                  string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                    if h3:
+                        # Verify the next sibling table actually has "Sources of Funds"
+                        next_table = div.find_next_sibling("table")
+                        if next_table:
+                            table_text = next_table.get_text()
+                            if "Capital and liabilities" in table_text:
+                                target_table = next_table
+                                break
+                result = await fetch_indas_key_values(target_table)
+                return result, value, "BANKING"
 
 
         return structured_with_values, None, None
