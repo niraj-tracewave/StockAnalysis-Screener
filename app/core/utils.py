@@ -4567,8 +4567,38 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                     break
                 result = await fetch_li_key_values(target_table)
                 return result, value, "LI"
-
-            elif "INDAS" in url:
+            elif "_NBFC_INDAS_" in url:
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
+                                break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                        if h3:
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Finanical Asset" in table_text:
+                                    target_table = next_table
+                                    break
+                result = await fetch_indas_key_values(target_table)
+                return result, value, "NBFC"
+            elif "_INDAS_" in url:
                 target_table = None
                 if value == "Crores":
                     tables = soup.find_all("table", class_="gridtable")
@@ -4597,22 +4627,36 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                     result = await fetch_li_key_values(target_table)
                 return result, value, "INDAS"
             elif "BANKING" in url:
-                flex_divs = soup.find_all("div", class_="d-flex-table-head")
-                for div in reversed(flex_divs):
-                    h3 = div.find("h3",
-                                  string=lambda x: x and "Statement of Asset and Liabilities" in x)
-                    if h3:
-                        # Verify the next sibling table actually has "Sources of Funds"
-                        next_table = div.find_next_sibling("table")
-                        if next_table:
-                            table_text = next_table.get_text()
-                            if "Capital and liabilities" in table_text:
-                                target_table = next_table
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
                                 break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                        if h3:
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Capital and liabilities" in table_text:
+                                    target_table = next_table
+                                    break
                 result = await fetch_banking_key_values(target_table)
-                print(result)
                 return result, value, "BANKING"
-
 
         return structured_with_values, None, None
     except Exception as e:
