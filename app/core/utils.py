@@ -4091,3 +4091,598 @@ async def fetch_dividend_values(data):
     df_final = df_split[available].rename(columns=col_map)
 
     return df_final
+
+
+async def fetch_li_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+
+    if li_table is None:
+        return result
+
+    rows = li_table.find_all("tr")
+
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+
+
+        if ths and tds:
+            label = None
+            for th in ths:
+                text = th.get_text(strip=True)
+                if text and not text.isdigit():
+                    label = text
+                    break
+
+            if label is None:
+                continue
+
+            value = tds[-1].get_text(strip=True)
+            if label and value:
+                result[label] = value
+
+    return result
+
+async def fetch_indas_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+    if li_table is None:
+        return result
+    rows = li_table.find_all("tr")
+    main_heading = None
+    heading_mapping = {
+        "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+        "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+        "Total Trade payable": "Total Trade payable, current"
+    }
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+        # if ths and tds:
+        label = None
+        for th in ths:
+            # Handle text inside <b> tag or direct text
+            b_tag = th.find("b")
+            if b_tag:
+                text = b_tag.get_text(strip=True)
+            else:
+                text = th.get_text(strip=True)
+            if text and not text.isdigit():
+                label = text
+                break
+        if label is None:
+            for th in tds:
+                # Handle text inside <b> tag or direct text
+                b_tag = th.find("b")
+                if b_tag:
+                    text = b_tag.get_text(strip=True)
+                else:
+                    text = th.get_text(strip=True)
+                if text and not text.isdigit():
+                    label = text
+                    break
+
+        if label is None:
+            continue
+
+        if label == "Current liabilities":
+            main_heading = label
+        # Handle value inside <b> tag or direct text
+        value = None
+        if tds:
+            last_td = tds[-1]
+            b_tag = last_td.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_td.get_text(strip=True)
+
+            # if label and value:
+        if value is None and ths:
+            last_td = ths[-1]
+            b_tag = last_td.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_td.get_text(strip=True)
+
+        if main_heading == "Current liabilities":
+            label = heading_mapping.get(label, label)
+
+        result[label] = value
+    return result
+
+# async def fetch_banking_key_values(li_table):
+#     """
+#     Extracts key-value pairs from LI financial table
+#     e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+#     """
+#     result = {}
+#     if li_table is None:
+#         return result
+#     rows = li_table.find_all("tr")
+#     main_heading = None
+#     heading_mapping = {
+#         "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+#         "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+#         "Total Trade payable": "Total Trade payable, current"
+#     }
+#     for tr in rows:
+#         ths = tr.find_all("th")
+#         tds = tr.find_all("td")
+#         print(ths, "-------ths------")
+#         print(tds, "-------tds------")
+#         print("------------------------------------")
+#         # if ths and tds:
+#         label = None
+#         for th in ths:
+#             # Handle text inside <b> tag or direct text
+#             b_tag = th.find("b")
+#             if b_tag:
+#                 text = b_tag.get_text(strip=True)
+#             else:
+#                 text = th.get_text(strip=True)
+#             if text and not text.isdigit():
+#                 label = text
+#                 break
+#         if label is None:
+#             for th in tds:
+#                 # Handle text inside <b> tag or direct text
+#                 b_tag = th.find("b")
+#                 if b_tag:
+#                     text = b_tag.get_text(strip=True)
+#                 else:
+#                     text = th.get_text(strip=True)
+#                 if text and not text.isdigit():
+#                     label = text
+#                     break
+#
+#         if label is None:
+#             continue
+#
+#         if label == "Current liabilities":
+#             main_heading = label
+#         # Handle value inside <b> tag or direct text
+#         value = None
+#         if tds:
+#             last_td = tds[-1]
+#             b_tag = last_td.find("b")
+#             if b_tag:
+#                 value = b_tag.get_text(strip=True)
+#             else:
+#                 value = last_td.get_text(strip=True)
+#
+#             # if label and value:
+#         if value is None and ths:
+#             last_td = ths[-1]
+#             b_tag = last_td.find("b")
+#             if b_tag:
+#                 value = b_tag.get_text(strip=True)
+#             else:
+#                 value = last_td.get_text(strip=True)
+#
+#         if main_heading == "Current liabilities":
+#             label = heading_mapping.get(label, label)
+#
+#         result[label] = value
+#     return result
+
+# async def fetch_banking_key_values(li_table):
+#     """
+#     Extracts key-value pairs from LI financial table
+#     e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+#     """
+#     result = {}
+#     if li_table is None:
+#         return result
+#
+#     def get_shallow_text(tag):
+#         """Get only the direct text of a tag, excluding text from child tags."""
+#         return ''.join(
+#             child for child in tag.children
+#             if hasattr(child, '__class__') and child.__class__.__name__ == 'NavigableString'
+#         ).strip()
+#
+#     def get_label_text(th):
+#         """Extract label from th, handling nested th and b tags."""
+#         # First try inner <th> tag
+#         inner_th = th.find("th")
+#         if inner_th:
+#             b_tag = inner_th.find("b")
+#             return b_tag.get_text(strip=True) if b_tag else inner_th.get_text(strip=True)
+#         # Then try <b> tag directly
+#         b_tag = th.find("b")
+#         if b_tag:
+#             return b_tag.get_text(strip=True)
+#         # Fall back to shallow text only (no child tag text)
+#         return get_shallow_text(th)
+#
+#     def get_value_text(tag):
+#         """Extract value text from td/th, handling b tags."""
+#         b_tag = tag.find("b")
+#         if b_tag:
+#             return b_tag.get_text(strip=True)
+#         return tag.get_text(strip=True)
+#
+#     rows = li_table.find_all("tr")
+#     main_heading = None
+#     heading_mapping = {
+#         "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+#         "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+#         "Total Trade payable": "Total Trade payable, current"
+#     }
+#
+#     for tr in rows:
+#         ths = tr.find_all("th")
+#         tds = tr.find_all("td")
+#
+#         # --- Extract Label ---
+#         label = None
+#
+#         # Try from <th> elements first
+#         for th in ths:
+#             text = get_label_text(th)
+#             if text and not text.isdigit():
+#                 label = text
+#                 break
+#
+#         # Fallback: try from <td> elements
+#         if label is None:
+#             for td in tds:
+#                 b_tag = td.find("b")
+#                 text = b_tag.get_text(strip=True) if b_tag else td.get_text(strip=True)
+#                 if text and not text.isdigit():
+#                     label = text
+#                     break
+#
+#         if label is None:
+#             continue
+#
+#         # --- Track main heading ---
+#         if label == "Current liabilities":
+#             main_heading = label
+#
+#         # --- Extract Value ---
+#         value = None
+#
+#         # Try last <td> first
+#         if tds:
+#             value = get_value_text(tds[-1])
+#
+#         # Fallback: try inner <td> inside <th>
+#         if value is None and ths:
+#             for th in ths:
+#                 inner_td = th.find("td")
+#                 if inner_td:
+#                     value = get_value_text(inner_td)
+#                     break
+#
+#         # Last fallback: try last <th> text
+#         if value is None and ths:
+#             value = get_value_text(ths[-1])
+#
+#         # --- Apply heading mapping if under Current liabilities ---
+#         if main_heading == "Current liabilities":
+#             label = heading_mapping.get(label, label)
+#
+#         result[label] = value
+#     return result
+
+
+async def fetch_banking_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+    if li_table is None:
+        return result
+
+    def get_shallow_text(tag):
+        """Get only the direct text of a tag, excluding text from child tags."""
+        return ''.join(
+            child for child in tag.children
+            if hasattr(child, '__class__') and child.__class__.__name__ == 'NavigableString'
+        ).strip()
+
+    def get_label_text(th):
+        """Extract label from th, handling nested th and b tags."""
+        # First try inner <th> tag - use shallow text to avoid nested <td> bleeding in
+        inner_th = th.find("th")
+        if inner_th:
+            b_tag = inner_th.find("b")
+            if b_tag:
+                return b_tag.get_text(strip=True)
+            # Use shallow text to avoid nested <td> value leaking into label
+            text = get_shallow_text(inner_th)
+            return text if text else inner_th.get_text(strip=True)
+        # Then try <b> tag directly
+        b_tag = th.find("b")
+        if b_tag:
+            return b_tag.get_text(strip=True)
+        # Fall back to shallow text only
+        return get_shallow_text(th)
+
+    def get_value_text(tag):
+        """Extract value text from td/th, handling b tags."""
+        b_tag = tag.find("b")
+        if b_tag:
+            return b_tag.get_text(strip=True)
+        return tag.get_text(strip=True)
+
+    rows = li_table.find_all("tr")
+    main_heading = None
+    heading_mapping = {
+        "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+        "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+        "Total Trade payable": "Total Trade payable, current"
+    }
+
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+
+        # --- Extract Label ---
+        label = None
+
+        # Try from <th> elements first
+        for th in ths:
+            text = get_label_text(th)
+            if text and not text.isdigit():
+                label = text
+                break
+
+        # Fallback: try from <td> elements
+        if label is None:
+            for td in tds:
+                b_tag = td.find("b")
+                text = b_tag.get_text(strip=True) if b_tag else td.get_text(strip=True)
+                if text and not text.isdigit():
+                    label = text
+                    break
+
+        if label is None:
+            continue
+
+        # --- Track main heading ---
+        if label == "Current liabilities":
+            main_heading = label
+
+        # --- Extract Value ---
+        value = None
+
+        # Try last <td> first
+        if tds:
+            value = get_value_text(tds[-1])
+
+        # Fallback: try inner <td> inside <th>
+        if value is None and ths:
+            for th in ths:
+                inner_td = th.find("td")
+                if inner_td:
+                    value = get_value_text(inner_td)
+                    break
+
+        # Last fallback: try last <th> text
+        if value is None and ths:
+            value = get_value_text(ths[-1])
+
+        # --- Apply heading mapping if under Current liabilities ---
+        if main_heading == "Current liabilities":
+            label = heading_mapping.get(label, label)
+
+        result[label] = value
+
+    return result
+
+async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/",
+            "Connection": "keep-alive"
+        }
+
+        # first hit homepage to get cookies
+        session.get("https://www.nseindia.com", headers=headers)
+
+        path = url.split("nsearchives.nseindia.com")[-1]
+
+        headers = {
+            "authority": "nsearchives.nseindia.com",
+            "method": "GET",
+            "path": path,
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "if-none-match": "W/\"46855-1768223605988\"",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            heading = soup.find("h3", string=lambda x: x and "General information" in x)
+            gITable = heading.find_next("table")
+            table_data = await extract_table_as_dict(soup, gITable)
+            value = table_data.get("Level of rounding used in financial results", "Crores")
+
+            if "_LI_" in url:
+                target_table = None
+                target_heading = "Format for financial results by life insurance companies filed with stock exchanges"
+
+                if value == "Crores":
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and target_heading in h3.get_text(" ", strip=True):
+                                table_text = table.get_text()
+                                if "Sources of Funds" in table_text:
+                                    target_table = table
+                                    break
+
+                                break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Format for financial results by life insurance" in x)
+                        if h3:
+                            # Verify the next sibling table actually has "Sources of Funds"
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Sources of Funds" in table_text:
+                                    target_table = next_table
+                                    break
+                result = await fetch_li_key_values(target_table)
+                return result, value, "LI"
+            elif "_NBFC_INDAS_" in url:
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
+                                break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                        if h3:
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Finanical Asset" in table_text:
+                                    target_table = next_table
+                                    break
+                result = await fetch_indas_key_values(target_table)
+                return result, value, "NBFC"
+            elif "_INDAS_" in url:
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
+                                break
+                        if target_table:
+                            break
+                    result = await fetch_indas_key_values(target_table)
+                else:
+                    asset_heading = soup.find("h3",string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                    if asset_heading:
+                        for sibling in asset_heading.find_all_next("table"):
+                            classes = sibling.get("class", [])
+                            if "gridtable" in classes and "stockExchnageTableLastColwidth" in classes:
+                                target_table = sibling
+                                break
+                    result = await fetch_li_key_values(target_table)
+                return result, value, "INDAS"
+            elif "BANKING" in url:
+                target_table = None
+                if value == "Crores":
+                    tables = soup.find_all("table", class_="gridtable")
+                    for table in tables:
+                        rows = table.find_all(
+                            "tr",
+                            class_=lambda cls: cls and "main-row" in cls.split()
+                        )
+                        for row in rows:
+                            th = row.find("th")
+                            h3 = th.find("h3") if th else None
+                            if h3 and "Statement of Asset and Liabilities" in h3.get_text(" ", strip=True):
+                                target_table = table
+                                break
+                        if target_table:
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Statement of Asset and Liabilities" in x)
+                        if h3:
+                            next_table = div.find_next_sibling("table")
+                            if next_table:
+                                table_text = next_table.get_text()
+                                if "Capital and liabilities" in table_text:
+                                    target_table = next_table
+                                    break
+                result = await fetch_banking_key_values(target_table)
+                return result, value, "BANKING"
+            elif "_GI_" in url:
+                if value == "Crores":
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        table_text = table.get_text(separator=" ")
+                        if "Sources of Funds" in table_text:
+                            target_table = table
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    found = False
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Format for financial results by general insurance companies filed with stock exchanges" in x)
+                        if h3:
+                            for sibling in div.find_all_next("table"):
+                                table_text = sibling.get_text(separator=" ")
+                                if "Sources of Funds" in table_text:
+                                    target_table = sibling
+                                    found = True
+                                    break
+                        if found:
+                            break
+                result = await fetch_indas_key_values(target_table)
+                return result, value, "GI"
+
+        return structured_with_values, None, None
+    except Exception as e:
+        return [], None, None
