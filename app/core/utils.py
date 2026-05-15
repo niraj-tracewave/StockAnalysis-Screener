@@ -4657,6 +4657,31 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                     break
                 result = await fetch_banking_key_values(target_table)
                 return result, value, "BANKING"
+            elif "_GI_" in url:
+                if value == "Crores":
+                    tables = soup.find_all("table")
+                    for table in tables:
+                        table_text = table.get_text(separator=" ")
+                        if "Sources of Funds" in table_text:
+                            target_table = table
+                            break
+                else:
+                    flex_divs = soup.find_all("div", class_="d-flex-table-head")
+                    found = False
+                    for div in reversed(flex_divs):
+                        h3 = div.find("h3",
+                                      string=lambda x: x and "Format for financial results by general insurance companies filed with stock exchanges" in x)
+                        if h3:
+                            for sibling in div.find_all_next("table"):
+                                table_text = sibling.get_text(separator=" ")
+                                if "Sources of Funds" in table_text:
+                                    target_table = sibling
+                                    found = True
+                                    break
+                        if found:
+                            break
+                result = await fetch_indas_key_values(target_table)
+                return result, value, "GI"
 
         return structured_with_values, None, None
     except Exception as e:

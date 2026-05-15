@@ -2131,6 +2131,11 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                     total_equity = capital + reserves_and_surplus
                                 elif output_obj.get("format_type") == "NBFC":
                                     total_equity = to_decimal(output_obj.get("Total equity attributable to owners of parent"))
+                                elif output_obj.get("format_type") == "GI":
+                                    share_capital = to_decimal(output_obj.get("Share capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    shareholder_fund = to_decimal(output_obj.get("(b)"))
+                                    total_equity = share_capital + reserves_and_surplus + shareholder_fund
                                 if output_obj.get("amount_type") == "Lakhs":
                                     total_equity = total_equity * 100000
                                 print(total_equity)
