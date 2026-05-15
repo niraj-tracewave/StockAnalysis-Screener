@@ -74,5 +74,9 @@ celery_app.conf.beat_schedule = {
     "fetch_calculate_and_update_stock_dividend": {
         "task": "fetch_calculate_and_update_stock_dividend_data",
         "schedule": crontab(minute="*/12"),
+    },
+    "fetch_calculate_and_update_stock_book_value": {
+        "task": "fetch_calculate_and_update_stock_book_value_data",
+        "schedule": crontab(minute="*/18"),
     }
 }

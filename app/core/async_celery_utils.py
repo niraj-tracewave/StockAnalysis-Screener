@@ -2020,7 +2020,7 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
     error_symbols = []
     unsaved_symbols = []
     processed_symbols = []
-    file_name = "nse_bse_stocks_dividend"
+    file_name = "nse_bse_stocks_book_value"
     try:
         stmt = (
             select(CompanyStock)
@@ -2045,15 +2045,13 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
 
         missing_symbols = missing_symbols[:5]
 
-        # current_processed_symbols = [c.nse_symbol for c in missing_symbols]
-        # await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
 
         def chunk_list(data, size):
             for i in range(0, len(data), size):
                 yield data[i:i + size]
 
-        def to_percentage(val):
-            return (Decimal(str(val)) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         def to_decimal(val):
             try:
@@ -2068,24 +2066,21 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
             for company in chunk:
                 try:
                     print(f"\nProcessing company: {company.id} | {company.name}")
-                    dividend_yield = None
                     savepoint = db.begin_nested()
                     try:
                         nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
                         bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        book_value = None
                         if nse_company_list and bse_company_list:
                             integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
                                 company.nse_symbol, "equity")
                             total_equity = 0
                             col_iv = 0
-                            book_value = None
                             output_obj = {}
                             if integrated_filing_financials_list:
                                 consolidated_list = []
                                 standalone_list = []
                                 for integrated_filing_obj in integrated_filing_financials_list.get("data"):
-                                    qe_date = integrated_filing_obj.get("qe_Date")
-                                    print(qe_date, "ccc-----")
                                     consolidated = integrated_filing_obj.get("consolidated")
                                     type_sub = integrated_filing_obj.get("type_Sub")
                                     if type_sub == "Revision":
@@ -2119,6 +2114,10 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                             output_obj = output
                                             break
 
+                                if not output_obj:
+                                    unsaved_symbols.append(company.nse_symbol)
+                                    continue
+
                                 if output_obj.get("format_type") == "LI":
                                     share_capital = to_decimal(output_obj.get("Share capital"))
                                     reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
@@ -2138,7 +2137,6 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                     total_equity = share_capital + reserves_and_surplus + shareholder_fund
                                 if output_obj.get("amount_type") == "Lakhs":
                                     total_equity = total_equity * 100000
-                                print(total_equity)
 
                                 if total_equity:
                                     shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol,
@@ -2163,25 +2161,127 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                                 if item['COL_II'] == 'Total'
                                             )
                                             col_iv = total_row['COL_VII']
-                                            print(col_iv, type(col_iv))
                                             col_iv = int(col_iv)
+                                    else:
+                                        unsaved_symbols.append(company.nse_symbol)
+                                        continue
 
                                     if col_iv:
                                         book_value = total_equity / col_iv
                                         book_value = round(book_value, 2)
-                                    print(book_value)
-
-
-
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
                         elif nse_company_list:
-                            pass
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            total_equity = 0
+                            col_iv = 0
+                            output_obj = {}
+                            if integrated_filing_financials_list:
+                                consolidated_list = []
+                                standalone_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    type_sub = integrated_filing_obj.get("type_Sub")
+                                    if type_sub == "Revision":
+                                        continue
+                                    if consolidated == "Consolidated":
+                                        consolidated_list.append(integrated_filing_obj)
+                                    elif consolidated == "Standalone":
+                                        standalone_list.append(integrated_filing_obj)
+                                if consolidated_list:
+                                    for i in consolidated_list:
+                                        ixbrl = i.get("ixbrl")
+                                        qe_Date = i.get("qe_Date")
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                            ixbrl)
+                                        if output:
+                                            output['date'] = qe_Date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_obj = output
+                                            break
+                                if not output_obj:
+                                    for i in standalone_list:
+                                        ixbrl = i.get("ixbrl")
+                                        qe_Date = i.get("qe_Date")
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                            ixbrl)
+                                        if output:
+                                            output['date'] = qe_Date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_obj = output
+                                            break
+
+                                if not output_obj:
+                                    unsaved_symbols.append(company.nse_symbol)
+                                    continue
+
+                                if output_obj.get("format_type") == "LI":
+                                    share_capital = to_decimal(output_obj.get("Share capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    total_equity = share_capital + reserves_and_surplus
+                                elif output_obj.get("format_type") == "INDAS":
+                                    total_equity = to_decimal(
+                                        output_obj.get("Total equity attributable to owners of parent"))
+                                elif output_obj.get("format_type") == "BANKING":
+                                    capital = to_decimal(output_obj.get("Capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    total_equity = capital + reserves_and_surplus
+                                elif output_obj.get("format_type") == "NBFC":
+                                    total_equity = to_decimal(
+                                        output_obj.get("Total equity attributable to owners of parent"))
+                                elif output_obj.get("format_type") == "GI":
+                                    share_capital = to_decimal(output_obj.get("Share capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    shareholder_fund = to_decimal(output_obj.get("(b)"))
+                                    total_equity = share_capital + reserves_and_surplus + shareholder_fund
+                                if output_obj.get("amount_type") == "Lakhs":
+                                    total_equity = total_equity * 100000
+
+                                if total_equity:
+                                    shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol,
+                                                                                               "equities")
+                                    shareholding_obj = find_by_date(shareholding_list, output_obj.get("date"))
+                                    if shareholding_obj:
+                                        row = {
+                                            "date": shareholding_obj.get("date"),
+                                            "remarksWeb": shareholding_obj.get("remarksWeb"),
+                                            "revisionRemark": shareholding_obj.get("revisionRemark"),
+                                            "revisionDate": shareholding_obj.get("revisionDate"),
+                                        }
+                                        shareholding_all_data = await main_nse_fetch_shareholding_data_using_api_for_book_value(
+                                            id="popup1",
+                                            symbol=shareholding_obj.get("symbol"),
+                                            name=shareholding_obj.get("name"),
+                                            rec_id=shareholding_obj.get("recordId"),
+                                            row=row)
+                                        if shareholding_all_data.get("type") == "data":
+                                            total_row = next(
+                                                item for item in shareholding_all_data['result']['data']['summary']
+                                                if item['COL_II'] == 'Total'
+                                            )
+                                            col_iv = total_row['COL_VII']
+                                            col_iv = int(col_iv)
+                                    else:
+                                        unsaved_symbols.append(company.nse_symbol)
+                                        continue
+
+                                    if col_iv:
+                                        book_value = total_equity / col_iv
+                                        book_value = round(book_value, 2)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
                         elif bse_company_list:
                             pass
                         else:
                             unsaved_symbols.append(company.nse_symbol)
                             continue
-                        # company.details.dividend_yield = dividend_yield
-                        # processed_symbols.append(company.nse_symbol)
+                        company.details.book_value = book_value
+                        processed_symbols.append(company.nse_symbol)
                     except Exception as e:
                         savepoint.rollback()
                         raise

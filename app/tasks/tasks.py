@@ -6,12 +6,13 @@ from sqlalchemy import select
 from app.apis.models.stock_data import CompanyStock
 from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50_async, \
     fetch_30y_stock_chart_data_async, fetch_and_update_30y_stock_chart_data_async, \
-    fetch_stock_quarterly_result_data_async,fetch_and_update_stock_shareholding_pattern_data_async, update_nse_bse_scrip_code_async, update_nse_bse_stock_information_async, \
+    fetch_stock_quarterly_result_data_async, fetch_and_update_stock_shareholding_pattern_data_async, \
+    update_nse_bse_scrip_code_async, update_nse_bse_stock_information_async, \
     fetch_and_store_newly_listed_company_data_from_nse_bse_async, \
     fetch_and_update_stock_shareholding_pattern_data_async, \
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data_async, \
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async, \
-    fetch_calculate_and_update_stock_dividend_data_async
+    fetch_calculate_and_update_stock_dividend_data_async, fetch_calculate_and_update_stock_book_value_data_async
 from app.core.utils import run_async_task
 from app.db.postgres.sync_session import SessionLocalSync
 from app.db.redis.redis import redis_client
@@ -248,3 +249,12 @@ def fetch_calculate_and_update_stock_dividend_data():
     Background task to store NSE company data
     """
     run_async_task(fetch_calculate_and_update_stock_dividend_data_async())
+
+@celery_app.task(
+    name="fetch_calculate_and_update_stock_book_value_data",
+)
+def fetch_calculate_and_update_stock_book_value_data():
+    """
+    Background task to store NSE company data
+    """
+    run_async_task(fetch_calculate_and_update_stock_book_value_data_async())
