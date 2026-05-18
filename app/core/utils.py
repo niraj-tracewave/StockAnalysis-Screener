@@ -5210,3 +5210,1624 @@ async def fetch_integrated_filing_financials_data_for_roce_from_nse(url):
         return structured_with_values, None, None
     except Exception as e:
         return [], None, None
+
+
+import json
+
+# for IndAS
+def get_val_list(key, rows_data, n):
+    for row in rows_data:
+        if not isinstance(row, dict):
+            continue
+        if row.get("key") == key:
+            return row.get("values", [None] * n)
+        if "children" in row:
+            result = get_val_list(key, row["children"], n)
+            if result and any(v is not None for v in result):
+                return result
+    return [None] * n
+
+
+def parse_quarter_date(date_str: str):
+    try:
+        return datetime.strptime(date_str, "%b-%Y")
+    except Exception:
+        return None
+
+
+def yoy_growth(values: list, headers: list) -> list:
+    """
+    Compare each quarter with SAME quarter exactly 1 year ago.
+    Uses date matching — not fixed i+4 offset.
+    If same quarter last year not in headers → None.
+    """
+    n = len(headers)
+    result = [None] * n
+    parsed_dates = [parse_quarter_date(h) for h in headers]
+
+    for i in range(n):
+        curr_date = parsed_dates[i]
+        curr_val  = values[i]
+
+        if curr_date is None or curr_val is None:
+            continue
+
+        target_month = curr_date.month
+        target_year  = curr_date.year - 1
+
+        prev_val = None
+        for j in range(n):
+            d = parsed_dates[j]
+            if d and d.month == target_month and d.year == target_year:
+                prev_val = values[j]
+                break
+
+        if prev_val is not None and prev_val != 0:
+            result[i] = round((curr_val - prev_val) / abs(prev_val) * 100, 2)
+
+    return result
+
+
+def _apply_screener_formulas(raw: dict, n: int, headers: list) -> dict:  # ← headers added
+    """
+    Apply all Screener formulas to raw extracted values.
+      Expenses         = Total Expenses - Finance Costs - Depreciation
+      Operating Profit = Sales - Expenses
+      OPM %            = Operating Profit / Sales * 100
+      Employee Cost %  = Employee Expense / Sales * 100
+      Tax %            = Total Tax / PBT * 100
+      Other Inc Normal = Other Income - Exceptional Items
+      Minority         = shown as negative
+      Profit excl Exc  = Net Profit - Exceptional Items AT
+      Profit for PE    = Net Profit - Minority
+      Profit for EPS   = Profit attributable to owners of parent
+      YOY Sales %      = date-matched same quarter last year
+      YOY Profit %     = date-matched same quarter last year
+    """
+
+    def sub(a, b):
+        return [
+            (av - bv) if (av is not None and bv is not None) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def pct(a, b):
+        return [
+            round(av / bv * 100) if (av is not None and bv and bv != 0) else None
+            for av, bv in zip(a, b)
+        ]
+
+    sales_v       = raw["sales"]
+    other_inc_v   = raw["other_income"]
+    total_exp_v   = raw["total_expenses"]
+    finance_v     = raw["finance_costs"]
+    dep_v         = raw["depreciation"]
+    emp_v         = raw["employee_benefit"]
+    exceptional_v = raw["exceptional"]
+    pbt_v         = raw["pbt"]
+    tax_v         = raw["total_tax"]
+    net_profit_v  = raw["net_profit"]
+    minority_v    = raw["minority"]
+    owners_v      = raw["profit_owners"]
+
+    # Expenses = Total Expenses - Finance Costs - Depreciation
+    expenses_v         = sub(sub(total_exp_v, finance_v), dep_v)
+
+    # Operating Profit = Sales - Expenses
+    op_profit_v        = sub(sales_v, expenses_v)
+
+    # OPM % = Operating Profit / Sales * 100
+    opm_pct_v          = pct(op_profit_v, sales_v)
+
+    # Employee Cost % = Employee Expense / Sales * 100
+    emp_pct_v          = pct(emp_v, sales_v)
+
+    # Tax % = Total Tax / PBT * 100
+    tax_pct_v          = pct(tax_v, pbt_v)
+
+    # Other Income Normal = Other Income - Exceptional Items
+    other_inc_normal_v = sub(other_inc_v, exceptional_v)
+
+    # Minority Share = shown as negative
+    minority_neg_v     = [(-v if v else 0) for v in minority_v]
+
+    # Profit excl Exceptional = Net Profit - Exceptional Items AT
+    profit_excl_v      = sub(net_profit_v, exceptional_v)
+
+    # Profit for PE = Net Profit - Minority
+    profit_pe_v        = sub(net_profit_v, minority_v)
+
+    # Profit for EPS = Profit attributable to owners of parent
+    profit_eps_v       = owners_v
+
+    # YOY Sales Growth % — date matched
+    yoy_sales_v        = yoy_growth(sales_v, headers)
+
+    # YOY Profit Growth % — date matched
+    yoy_profit_v       = yoy_growth(net_profit_v, headers)
+
+    return {
+        **raw,
+        "expenses":         expenses_v,
+        "op_profit":        op_profit_v,
+        "opm_pct":          opm_pct_v,
+        "emp_pct":          emp_pct_v,
+        "tax_pct":          tax_pct_v,
+        "other_inc_normal": other_inc_normal_v,
+        "minority_neg":     minority_neg_v,
+        "profit_excl":      profit_excl_v,
+        "profit_pe":        profit_pe_v,
+        "profit_eps":       profit_eps_v,
+        "yoy_sales":        yoy_sales_v,
+        "yoy_profit":       yoy_profit_v,
+    }
+
+
+def _extract_raw_from_rows(rows: list, n: int) -> dict:
+    def get(key):
+        return get_val_list(key, rows, n)
+
+    return {
+        "sales":            get("revenue_from_operations"),
+        "other_income":     get("other_income"),
+        "total_expenses":   get("total_expenses"),
+        "finance_costs":    get("finance_costs"),
+        "depreciation":     get("depreciation,_depletion_and_amortisation_expense"),
+        "employee_benefit": get("employee_benefit_expense"),
+        "exceptional":      [v or 0 for v in get("exceptional_items")],
+        "pbt":              get("total_profit_before_tax"),
+        "total_tax":        get("total_tax_expenses"),
+        "net_profit":       get("total_profit_(loss)_for_period"),
+        "minority":         [v or 0 for v in get(
+                                "total_profit_or_loss,_attributable_to_non-controlling_interests")],
+        "profit_owners":    get("profit_or_loss,_attributable_to_owners_of_parent"),
+        "eps":              get("basic_earnings_(loss)_per_share_from_continuing_operations"),
+        "eps_diluted":      get("diluted_earnings_(loss)_per_share_from_continuing_operations"),
+        "current_tax":      get("current_tax"),
+        "deferred_tax":     get("deferred_tax"),
+        "paid_up_capital":  get("paid-up_equity_share_capital"),
+        "face_value":       get("face_value_of_equity_share_capital"),
+        "reserves":         get("reserves_excluding_revaluation_reserve"),
+        "debt_equity":      get("debt_equity_ratio"),
+        "other_comp":       get("other_comprehensive_income_net_of_taxes"),
+        "total_comp":       get("total_comprehensive_income_for_the_period"),
+    }
+
+
+def _extract_raw_from_quarters(quarters: list, n: int) -> dict:
+    def get(field, fallback=None):
+        vals = [q.get(field) for q in quarters]
+        if fallback and all(v is None for v in vals):
+            vals = [q.get(fallback) for q in quarters]
+        return vals
+
+    def get_or_zero(field):
+        return [v or 0 for v in get(field)]
+
+    return {
+        "sales":            get("sales", "revenue_from_operations"),
+        "other_income":     get("other_income"),
+        "total_expenses":   get("total_expenses"),
+        "finance_costs":    get("interest", "finance_costs"),
+        "depreciation":     get("depreciation"),
+        "employee_benefit": get("employee_cost", "employee_benefit_expense"),
+        "exceptional":      get_or_zero("exceptional_items"),
+        "pbt":              get("profit_before_tax"),
+        "total_tax":        get("total_tax", "tax"),
+        "net_profit":       get("net_profit"),
+        "minority":         get_or_zero("minority_share"),
+        "profit_owners":    get("profit_for_eps"),
+        "eps":              get("eps", "eps_basic"),
+        "eps_diluted":      get("eps_diluted"),
+        "current_tax":      get("current_tax"),
+        "deferred_tax":     get("deferred_tax"),
+        "paid_up_capital":  get("paid_up_equity_capital"),
+        "face_value":       get("face_value"),
+        "reserves":         get("reserves"),
+        "debt_equity":      get("debt_equity_ratio"),
+        "other_comp":       get("other_comprehensive_income"),
+        "total_comp":       get("total_comprehensive_income"),
+    }
+
+
+def _build_screener_rows(derived: dict, n: int) -> list:
+
+    def row(key, label, values, bold=False, children=None):
+        r = {
+            "key":    key,
+            "label":  label,
+            "type":   "group" if children else "single",
+            "unit":   "Rs Cr",
+            "values": values,
+        }
+        if children:
+            r["children"] = children
+        if bold:
+            r["bold"] = True
+        return r
+
+    return [
+        row("sales", "Sales", derived["sales"], bold=True, children=[
+            row("yoy_sales_growth_pct", "YOY Sales Growth %",      derived["yoy_sales"]),
+        ]),
+        row("expenses", "Expenses", derived["expenses"], bold=True, children=[
+            row("employee_cost_pct", "Employee Cost %", derived["emp_pct"]),
+        ]),
+        row("operating_profit", "Operating Profit", derived["op_profit"], bold=True),
+        row("opm_pct",          "OPM %",            derived["opm_pct"]),
+        row("other_income", "Other Income", derived["other_income"], bold=True, children=[
+            row("exceptional_items",   "Exceptional Items",   derived["exceptional"]),
+            row("other_income_normal", "Other Income Normal", derived["other_inc_normal"]),
+        ]),
+        row("interest",          "Interest",          derived["finance_costs"]),
+        row("depreciation",      "Depreciation",      derived["depreciation"]),
+        row("profit_before_tax", "Profit Before Tax", derived["pbt"],      bold=True),
+        row("tax_pct",           "Tax %",             derived["tax_pct"]),
+        row("net_profit", "Net Profit", derived["net_profit"], bold=True, children=[
+            row("minority_share",          "Minority Share",       derived["minority_neg"]),
+            row("exceptional_items_at",    "Exceptional Items AT", derived["exceptional"]),
+            row("profit_excl_exceptional", "Profit excl Excep",    derived["profit_excl"]),
+            row("profit_for_pe",           "Profit for PE",        derived["profit_pe"]),
+            row("profit_for_eps",          "Profit for EPS",       derived["profit_eps"]),
+            row("yoy_profit_growth_pct",    "YOY Profit Growth %", derived["yoy_profit"]),
+        ]),
+        row("eps", "EPS in Rs", derived["eps"], children=[
+        ]),
+    ]
+
+
+def convert_to_screener_format(old_values) -> dict:
+    if isinstance(old_values, str):
+        try:
+            old_values = json.loads(old_values)   # ← fixed: was missing json.loads
+        except Exception as e:
+            print(f"  JSON parse error: {e}")
+            return None
+
+    if isinstance(old_values, list):
+        print(old_values)
+        return _convert_list_format(old_values)
+
+    if isinstance(old_values, dict):
+        return _convert_dict_format(old_values)
+
+    print(f"  Unexpected type: {type(old_values)}")
+    return None
+
+
+def _convert_list_format(old_values: list) -> dict:
+    if not old_values:
+        return None
+
+    first = old_values[0]
+
+    # Format A: list of lists (per-quarter row lists)
+    if isinstance(first, list):
+        print(f"  Format A: {len(old_values)} quarter lists")
+        headers, all_rows = [], []
+        for quarter_data in old_values:
+            meta = next((r for r in quarter_data
+                         if isinstance(r, dict) and "date" in r), {})
+            rows = [r for r in quarter_data
+                    if not (isinstance(r, dict) and "date" in r)]
+            headers.append(meta.get("date", ""))
+            all_rows.append(rows)
+        merged = _merge_quarters_to_rows(all_rows, headers)
+        return _convert_dict_format(merged)
+
+    # Format B: list of per-quarter dicts with flat keys
+    if isinstance(first, dict) and "date" in first:
+        print(f"  Format B: {len(old_values)} quarter dicts")
+        headers = [q.get("date", "") for q in old_values]
+        n       = len(headers)
+        raw     = _extract_raw_from_quarters(old_values, n)
+        derived = _apply_screener_formulas(raw, n, headers)  # ← headers passed
+        return {
+            "headers":     headers,
+            "rows":        _build_screener_rows(derived, n),
+            "format_type": "IndAS",
+        }
+
+    # Format C: flat NSE rows list with multi-quarter values
+    if isinstance(first, dict) and "key" in first:
+        print(f"  Format C: flat NSE rows")
+
+        # ── Try to get real headers from metadata row ──────────────────────
+        headers = None
+
+        # Option 1: look for a row with "headers" key in the list
+        for r in old_values:
+            if isinstance(r, dict) and "headers" in r:
+                headers = r.get("headers")
+                break
+
+        # Option 2: look for row with key == "headers"
+        if not headers:
+            for r in old_values:
+                if isinstance(r, dict) and r.get("key") == "headers":
+                    headers = r.get("values")
+                    break
+
+        # Option 3: derive from sample values length with placeholder
+        if not headers:
+            sample = next((r.get("values") for r in old_values if r.get("values")), [])
+            n = len(sample)
+            headers = [f"Q{i + 1}" for i in range(n)]
+            print(f"  WARNING: Could not find real headers, using {headers}")
+        return _convert_dict_format({"rows": old_values, "headers": headers})
+
+    print(f"  Unknown list format")
+    return None
+
+
+def _convert_dict_format(old_values: dict) -> dict:
+    rows    = old_values.get("rows", [])
+    headers = old_values.get("headers", [])
+    n       = len(headers)
+
+    if n == 0 or not rows:
+        return None
+
+    raw     = _extract_raw_from_rows(rows, n)
+    derived = _apply_screener_formulas(raw, n, headers)  # ← headers passed
+
+    return {
+        "headers":     headers,
+        "rows":        _build_screener_rows(derived, n),
+        "format_type": "IndAS",
+    }
+
+
+def _merge_quarters_to_rows(all_rows: list, headers: list) -> dict:
+    if not all_rows:
+        return {"rows": [], "headers": headers}
+
+    n      = len(headers)
+    merged = {}
+
+    for q_idx, rows in enumerate(all_rows):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            key = r.get("key")
+            if not key:
+                continue
+            if key not in merged:
+                merged[key] = {
+                    "key":    key,
+                    "label":  r.get("label", ""),
+                    "type":   r.get("type", "single"),
+                    "unit":   r.get("unit", "Rs Cr"),
+                    "values": [None] * n,
+                }
+            vals = r.get("values", [])
+            merged[key]["values"][q_idx] = vals[0] if vals else None
+
+    return {"rows": list(merged.values()), "headers": headers}
+
+# for Banking
+
+
+def yoy_growth(values: list, headers: list) -> list:
+    """
+    Compare each quarter with SAME quarter exactly 1 year ago.
+    Uses date matching — not fixed i+4 offset.
+    If same quarter last year not in headers → None.
+    """
+    n = len(headers)
+    result = [None] * n
+    parsed_dates = [parse_quarter_date(h) for h in headers]
+
+    for i in range(n):
+        curr_date = parsed_dates[i]
+        curr_val  = values[i]
+
+        if curr_date is None or curr_val is None:
+            continue
+
+        target_month = curr_date.month
+        target_year  = curr_date.year - 1
+
+        prev_val = None
+        for j in range(n):
+            d = parsed_dates[j]
+            if d and d.month == target_month and d.year == target_year:
+                prev_val = values[j]
+                break
+
+        if prev_val is not None and prev_val != 0:
+            result[i] = round((curr_val - prev_val) / abs(prev_val) * 100, 2)
+
+    return result
+
+
+def _apply_screener_formulas_banking(raw: dict, n: int, headers: list) -> dict:
+    """
+    Apply Screener formulas for Banking format.
+
+    Revenue          = Total Interest Earned
+    Interest         = Interest Expenses
+    Expenses         = Total Operating Expenses
+    Employee Cost %  = Employee Cost / Revenue * 100
+    Financing Profit = Revenue - Interest - Expenses
+    Financing Margin = Financing Profit / Revenue * 100
+    Tax %            = Provision for Tax / PBT * 100
+    Profit for PE    = Net Profit - Minority
+    Profit for EPS   = Net Profit after taxes minority & associates
+    YOY Revenue %    = date-matched same quarter last year
+    YOY Profit %     = date-matched same quarter last year
+    """
+
+    def sub(a, b):
+        return [
+            (av - bv) if (av is not None and bv is not None) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def pct(a, b):
+        return [
+            round(av / bv * 100) if (av is not None and bv and bv != 0) else None
+            for av, bv in zip(a, b)
+        ]
+
+    revenue_v        = raw["revenue"]
+    print(revenue_v, "----rrr-----")
+    interest_exp_v   = raw["interest_expended"]
+    op_expenses_v    = raw["total_op_expenses"]
+    emp_v            = raw["employee_cost"]
+    other_inc_v      = raw["other_income"]
+    provisions_v     = raw["provisions"]
+    exceptional_v    = raw["exceptional"]
+    pbt_v            = raw["pbt"]
+    tax_v            = raw["total_tax"]
+    net_profit_v     = raw["net_profit"]
+    minority_v       = raw["minority"]
+    profit_assoc_v   = raw["profit_associates"]
+    profit_after_v   = raw["profit_after_minority"]
+
+    # Employee Cost % = Employee Cost / Revenue * 100
+    emp_pct_v        = pct(emp_v, revenue_v)
+
+    # Financing Profit = Revenue - Interest - Expenses
+    financing_profit_v = [
+        (rv - iv - ev)
+        if (rv is not None and iv is not None and ev is not None) else None
+        for rv, iv, ev in zip(revenue_v, interest_exp_v, op_expenses_v)
+    ]
+
+    # Financing Margin % = Financing Profit / Revenue * 100
+    financing_margin_v = pct(financing_profit_v, revenue_v)
+
+    # Tax % = Total Tax / PBT * 100
+    tax_pct_v        = pct(tax_v, pbt_v)
+
+    # Minority shown as negative
+    minority_neg_v   = [(-v if v else 0) for v in minority_v]
+
+    # Exceptional AT
+    exceptional_at_v = exceptional_v
+
+    # Profit excl Exceptional = Net Profit - Exceptional AT
+    profit_excl_v    = sub(net_profit_v, exceptional_at_v)
+
+    # Profit for PE = Net Profit - Minority
+    profit_pe_v      = sub(net_profit_v, minority_v)
+
+    # Profit for EPS = Net profit after taxes minority interest and associates
+    profit_eps_v     = raw["profit_after_minority"]
+
+    # YOY Revenue Growth %
+    yoy_revenue_v    = yoy_growth(revenue_v, headers)
+
+    # YOY Profit Growth %
+    yoy_profit_v     = yoy_growth(net_profit_v, headers)
+
+    return {
+        **raw,
+        "emp_pct":           emp_pct_v,
+        "financing_profit":  financing_profit_v,
+        "financing_margin":  financing_margin_v,
+        "tax_pct":           tax_pct_v,
+        "minority_neg":      minority_neg_v,
+        "exceptional_at":    exceptional_at_v,
+        "profit_excl":       profit_excl_v,
+        "profit_pe":         profit_pe_v,
+        "profit_eps":        profit_eps_v,
+        "yoy_revenue":       yoy_revenue_v,
+        "yoy_profit":        yoy_profit_v,
+    }
+
+
+def _extract_raw_from_rows_banking(rows: list, n: int) -> dict:
+    """Extract raw values from NSE Banking format rows."""
+    def get(key):
+        return get_val_list(key, rows, n)
+
+    return {
+        # ── Revenue ───────────────────────────────────────────────────────
+        "revenue":              get("total_interest_earned"),
+
+        # ── Interest Expended ─────────────────────────────────────────────
+        "interest_expended":    get("interest_expenses"),
+
+        # ── Operating Expenses ────────────────────────────────────────────
+        "total_op_expenses":    get("total_operating_expenses"),
+        "employee_cost":        get("employees_cost"),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        "other_income":         get("other_income"),
+
+        # ── Provisions ───────────────────────────────────────────────────
+        "provisions":           get("provisions_other_than_tax_and_contingencies"),
+
+        # ── Exceptional ──────────────────────────────────────────────────
+        "exceptional":          [v or 0 for v in get("exceptional_items")],
+
+        # ── PBT & Tax ────────────────────────────────────────────────────
+        "pbt":                  get("total_profit_(loss)_from_ordinary_activities_before_tax"),
+        "total_tax":            get("provision_for_tax"),
+
+        # ── Net Profit ───────────────────────────────────────────────────
+        "net_profit":           get("net_profit_(loss)_for_the_period"),
+
+        # ── Attributable ─────────────────────────────────────────────────
+        "profit_associates":    get("share_of_profit_(loss)_of_associates"),
+        "minority":             [v or 0 for v in get("profit_(loss)_of_minority_interest")],
+        "profit_after_minority":get("net_profit_(loss)_after_taxes_minority_interest_and_share_of_profit_(loss)_of_associates"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                  get("basic_earnings_per_share_before_extraordinary_items"),
+        "eps_diluted":          get("diluted_earnings_per_share_before_extraordinary_items"),
+
+        # ── Share Capital ─────────────────────────────────────────────────
+        "paid_up_capital":      get("paid-up_equity_share_capital"),
+        "face_value":           get("face_value_of_equity_share_capital"),
+        "reserves":             get("reserve_excluding_revaluation_reserves"),
+
+        # ── NPA Ratios ────────────────────────────────────────────────────
+        "gross_npa_pct":        get("percentage_of_gross_npas"),
+        "net_npa_pct":          get("percentage_of_net_npas"),
+
+        # ── Other ─────────────────────────────────────────────────────────
+        "cap_adequacy_ratio":   get("capital_adequacy_ratio"),
+        "other_comp":           get("other_comprehensive_income_net_of_taxes"),
+        "total_comp":           get("total_comprehensive_income_for_the_period"),
+        "debt_equity":          get("debt_equity_ratio"),
+        "current_tax":          get("provision_for_tax"),
+        "deferred_tax":         [None] * n,
+    }
+
+
+
+def _extract_raw_from_quarters_banking(quarters: list, n: int) -> dict:
+    def get(field, fallback=None):
+        vals = [q.get(field) for q in quarters]
+        if fallback and all(v is None for v in vals):
+            vals = [q.get(fallback) for q in quarters]
+        return vals
+
+    def get_or_zero(field):
+        return [v or 0 for v in get(field)]
+
+    return {
+        # ── Revenue (Interest Earned) ──────────────────────────────────────
+        "revenue":              get("total_interest_earned"),
+
+        # ── Interest Expended ─────────────────────────────────────────────
+        "interest_expended":    get("interest", "interest_expended"),
+
+        # ── Operating Expenses ────────────────────────────────────────────
+        "total_op_expenses":    get("expenses", "total_operating_expenses"),
+        "employee_cost":        get("employee_cost", "employees_cost"),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        "other_income":         get("other_income"),
+
+        # ── Provisions ────────────────────────────────────────────────────
+        "provisions":           get("provisions"),
+
+        # ── Exceptional ───────────────────────────────────────────────────
+        "exceptional":          get_or_zero("exceptional_items"),
+
+        # ── PBT & Tax ─────────────────────────────────────────────────────
+        "pbt":                  get("total_profit_(loss)_from_ordinary_activities_before_tax"),
+        "total_tax":            get("total_tax", "provision_for_tax"),
+
+        # ── Net Profit ────────────────────────────────────────────────────
+        "net_profit":           get("net_profit"),
+
+        # ── Attributable ──────────────────────────────────────────────────
+        "profit_associates":    get("profit_from_associates"),
+        "minority":             get_or_zero("profit_(loss)_of_minority_interest"),
+        "profit_after_minority":get("profit_for_eps", "profit_after_minority"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                  get("eps", "eps_basic"),
+        "eps_diluted":          get("eps_diluted"),
+
+        # ── Share Capital ─────────────────────────────────────────────────
+        "paid_up_capital":      get("paid_up_equity_capital"),
+        "face_value":           get("face_value"),
+        "reserves":             get("reserves"),
+
+        # ── NPA Ratios ────────────────────────────────────────────────────
+        "gross_npa_pct":        get("gross_npa_pct"),
+        "net_npa_pct":          get("net_npa_pct"),
+
+        # ── Other ─────────────────────────────────────────────────────────
+        "debt_equity":          get("debt_equity_ratio"),
+        "other_comp":           get("other_comprehensive_income"),
+        "total_comp":           get("total_comprehensive_income"),
+        "current_tax":          get("total_tax", "provision_for_tax"),
+        "deferred_tax":         [None] * n,
+    }
+
+def _build_screener_rows_banking(derived: dict, n: int) -> list:
+    """Build Screener rows for Banking format — matches SBI screener layout."""
+
+    def row(key, label, values, bold=False, children=None):
+        r = {
+            "key":    key,
+            "label":  label,
+            "type":   "group" if children else "single",
+            "unit":   "Rs Cr",
+            "values": values,
+        }
+        if children:
+            r["children"] = children
+        if bold:
+            r["bold"] = True
+        return r
+
+    return [
+        # ── Revenue ───────────────────────────────────────────────────────
+        row("revenue", "revenue", derived["revenue"], bold=True, children=[
+            row("yoy_sales_growth_pct", "YOY Sales Growth %", derived["yoy_revenue"]),
+        ]),
+
+        # ── Interest ──────────────────────────────────────────────────────
+        row("interest", "Interest", derived["interest_expended"]),
+
+        # ── Expenses ──────────────────────────────────────────────────────
+        row("expenses", "Expenses", derived["total_op_expenses"], bold=True, children=[
+            row("employee_cost_pct", "Employee Cost %", derived["emp_pct"]),
+        ]),
+
+        # ── Financing Profit ──────────────────────────────────────────────
+        row("financing_profit",     "Financing Profit",     derived["financing_profit"], bold=True),
+        row("financing_margin_pct", "Financing Margin %",   derived["financing_margin"]),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        row("other_income", "Other Income", derived["other_income"], bold=True, children=[
+            row("exceptional_items", "Exceptional Items", derived["exceptional"]),
+        ]),
+
+        # ── Depreciation (always 0 for banks) ─────────────────────────────
+        row("depreciation", "Depreciation", [0] * n),
+
+        # ── Profit Before Tax ─────────────────────────────────────────────
+        row("profit_before_tax", "Profit Before Tax", derived["pbt"], bold=True),
+        row("tax_pct",           "Tax %",             derived["tax_pct"]),
+
+        # ── Net Profit ───────────────────────────────────────────────────
+        row("net_profit", "Net Profit", derived["net_profit"], bold=True, children=[
+            row("profit_from_associates", "Profit from Associates", derived["profit_associates"]),
+            row("minority_share",         "Minority Share",         derived["minority_neg"]),
+            row("exceptional_items_at",   "Exceptional Items AT",   derived["exceptional_at"]),
+            row("profit_excl_exceptional","Profit excl Excep",      derived["profit_excl"]),
+            row("profit_for_pe",          "Profit for PE",          derived["profit_pe"]),
+            row("profit_for_eps",         "Profit for EPS",         derived["profit_eps"]),
+            row("yoy_profit_growth_pct", "YOY Profit Growth %", derived["yoy_profit"]),
+        ]),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        row("eps", "EPS in Rs", derived["eps"], children=[]),
+
+        # ── NPA Ratios ────────────────────────────────────────────────────
+        row("gross_npa_pct", "Gross NPA %", derived["gross_npa_pct"]),
+        row("net_npa_pct",   "Net NPA %",   derived["net_npa_pct"]),
+
+    ]
+
+
+def convert_to_screener_format_banking(old_values) -> dict:
+    if isinstance(old_values, str):
+        try:
+            old_values = json.loads(old_values)   # ← fixed: was missing json.loads
+        except Exception as e:
+            print(f"  JSON parse error: {e}")
+            return None
+
+    if isinstance(old_values, list):
+        print(old_values)
+        return _convert_list_format_banking(old_values)
+
+    if isinstance(old_values, dict):
+        return _convert_dict_format_banking(old_values)
+
+    print(f"  Unexpected type: {type(old_values)}")
+    return None
+
+
+def _convert_list_format_banking(old_values: list) -> dict:
+    if not old_values:
+        return None
+
+    first = old_values[0]
+
+    # Format A: list of lists (per-quarter row lists)
+    if isinstance(first, list):
+        print(f"  Format A: {len(old_values)} quarter lists")
+        headers, all_rows = [], []
+        for quarter_data in old_values:
+            meta = next((r for r in quarter_data
+                         if isinstance(r, dict) and "date" in r), {})
+            rows = [r for r in quarter_data
+                    if not (isinstance(r, dict) and "date" in r)]
+            headers.append(meta.get("date", ""))
+            all_rows.append(rows)
+        merged = _merge_quarters_to_rows(all_rows, headers)
+        return _convert_dict_format_banking(merged)
+
+    # Format B: list of per-quarter dicts with flat keys
+    if isinstance(first, dict) and "date" in first:
+        print(f"  Format B: {len(old_values)} quarter dicts")
+        headers = [q.get("date", "") for q in old_values]
+        n       = len(headers)
+        raw     = _extract_raw_from_quarters_banking(old_values, n)
+        derived = _apply_screener_formulas_banking(raw, n, headers)  # ← headers passed
+        return {
+            "headers":     headers,
+            "rows":        _build_screener_rows_banking(derived, n),
+            "format_type": "Banking",
+        }
+
+    # Format C: flat NSE rows list with multi-quarter values
+    if isinstance(first, dict) and "key" in first:
+        print(f"  Format C: flat NSE rows")
+
+        # ── Try to get real headers from metadata row ──────────────────────
+        headers = None
+
+        # Option 1: look for a row with "headers" key in the list
+        for r in old_values:
+            if isinstance(r, dict) and "headers" in r:
+                headers = r.get("headers")
+                break
+
+        # Option 2: look for row with key == "headers"
+        if not headers:
+            for r in old_values:
+                if isinstance(r, dict) and r.get("key") == "headers":
+                    headers = r.get("values")
+                    break
+
+        # Option 3: derive from sample values length with placeholder
+        if not headers:
+            sample = next((r.get("values") for r in old_values if r.get("values")), [])
+            n = len(sample)
+            headers = [f"Q{i + 1}" for i in range(n)]
+            print(f"  WARNING: Could not find real headers, using {headers}")
+        return _convert_dict_format({"rows": old_values, "headers": headers})
+
+    print(f"  Unknown list format")
+    return None
+
+
+def _convert_dict_format_banking(old_values: dict) -> dict:
+    rows    = old_values.get("rows", [])
+    headers = old_values.get("headers", [])
+    n       = len(headers)
+
+    if n == 0 or not rows:
+        return None
+
+    raw     = _extract_raw_from_rows_banking(rows, n)
+    derived = _apply_screener_formulas_banking(raw, n, headers)  # ← headers passed
+
+    return {
+        "headers":     headers,
+        "rows":        _build_screener_rows_banking(derived, n),
+        "format_type": "Banking",
+    }
+
+
+#nbfc
+
+def _extract_raw_from_rows_nbfc(rows: list, n: int) -> dict:
+    """Extract raw values from NSE NBFC IndAS format rows (Bajaj Finance, Shriram etc.)"""
+    def get(key):
+        return get_val_list(key, rows, n)
+
+    return {
+        # ── Revenue = Total Revenue From Operations ────────────────────────
+        "revenue":              get("total_revenue_from_operations"),
+
+        # ── Interest = Finance Costs ───────────────────────────────────────
+        "interest_expended":    get("finance_costs"),
+
+        # ── Expenses (raw — will derive screener expenses from this) ───────
+        "total_expenses":       get("total_expenses"),
+        "employee_cost":        get("employee_benefit_expense"),
+        "depreciation":         get("depreciation,_depletion_and_amortisation_expense"),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        "other_income":         get("other_income"),
+
+        # ── Exceptional ───────────────────────────────────────────────────
+        "exceptional":          [v or 0 for v in get("exceptional_items")],
+
+        # ── PBT & Tax ─────────────────────────────────────────────────────
+        "pbt":                  get("total_profit_before_tax"),
+        "total_tax":            get("total_tax_expenses"),
+        "current_tax":          get("current_tax"),
+        "deferred_tax":         get("deferred_tax"),
+
+        # ── Net Profit = Total profit for period ──────────────────────────
+        "net_profit":           get("total_profit_(loss)_for_period"),
+
+        # ── Minority = Non-controlling interests ──────────────────────────
+        "minority":             [v or 0 for v in get(
+                                    "total_profit_or_loss,_attributable_to_non-controlling_interests")],
+
+        # ── Profit for EPS = Profit attributable to owners of parent ──────
+        "profit_after_minority":get("profit_or_loss,_attributable_to_owners_of_parent"),
+
+        # ── No associates row in NBFC IndAS ───────────────────────────────
+        "profit_associates":    get("share_of_profit_(loss)_of_associates_and_joint_ventures_accounted_for_using_equity_method"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                  get("basic_earnings_per_share"),
+        "eps_diluted":          get("diluted_earnings_(loss)_per_share_from_continuing_operations"),
+
+        # ── Share Capital ─────────────────────────────────────────────────
+        "paid_up_capital":      get("paid-up_equity_share_capital"),
+        "face_value":           get("face_value_of_equity_share_capital"),
+        "reserves":             get("reserves_excluding_revaluation_reserve"),
+
+        # ── NPA Ratios ────────────────────────────────────────────────────
+        "gross_npa_pct":        get("percentage_of_gross_npas"),
+        "net_npa_pct":          get("percentage_of_net_npas"),
+
+        # ── Other ─────────────────────────────────────────────────────────
+        "debt_equity":          get("debt_equity_ratio"),
+        "other_comp":           get("other_comprehensive_income_net_of_taxes"),
+        "total_comp":           get("total_comprehensive_income_for_the_period"),
+    }
+
+
+def _extract_raw_from_quarters_nbfc(quarters: list, n: int) -> dict:
+    """Extract raw values from Format B quarters for NBFC."""
+    def get(field, fallback=None):
+        vals = [q.get(field) for q in quarters]
+        if fallback and all(v is None for v in vals):
+            vals = [q.get(fallback) for q in quarters]
+        return vals
+
+    def get_or_zero(field):
+        return [v or 0 for v in get(field)]
+
+    return {
+        # ── Revenue ───────────────────────────────────────────────────────
+        "revenue":              get("revenue", "total_revenue_from_operations"),
+
+        # ── Interest = Finance Costs ───────────────────────────────────────
+        "interest_expended":    get("interest", "finance_costs"),
+
+        # ── Expenses ──────────────────────────────────────────────────────
+        "total_expenses":       get("total_expenses"),
+        "employee_cost":        get("employee_cost", "employee_benefit_expense"),
+        "depreciation":         get("depreciation"),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        "other_income":         get("other_income"),
+
+        # ── Exceptional ───────────────────────────────────────────────────
+        "exceptional":          get_or_zero("exceptional_items"),
+
+        # ── PBT & Tax ─────────────────────────────────────────────────────
+        "pbt":                  get("profit_before_tax"),
+        "total_tax":            get("total_tax", "tax"),
+        "current_tax":          get("current_tax"),
+        "deferred_tax":         get("deferred_tax"),
+
+        # ── Net Profit ────────────────────────────────────────────────────
+        "net_profit":           get("net_profit"),
+
+        # ── Minority ──────────────────────────────────────────────────────
+        "minority":             get_or_zero("minority_share"),
+
+        # ── Profit for EPS ────────────────────────────────────────────────
+        "profit_after_minority":get("profit_for_eps", "profit_owners"),
+
+        # ── Associates ────────────────────────────────────────────────────
+        "profit_associates":    get("profit_from_associates"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                  get("eps", "eps_basic"),
+        "eps_diluted":          get("eps_diluted"),
+
+        # ── Share Capital ─────────────────────────────────────────────────
+        "paid_up_capital":      get("paid_up_equity_capital"),
+        "face_value":           get("face_value"),
+        "reserves":             get("reserves"),
+
+        # ── NPA ───────────────────────────────────────────────────────────
+        "gross_npa_pct":        get("gross_npa_pct"),
+        "net_npa_pct":          get("net_npa_pct"),
+
+        # ── Other ─────────────────────────────────────────────────────────
+        "debt_equity":          get("debt_equity_ratio"),
+        "other_comp":           get("other_comprehensive_income"),
+        "total_comp":           get("total_comprehensive_income"),
+    }
+
+
+def _apply_screener_formulas_nbfc(raw: dict, n: int, headers: list) -> dict:
+    """
+    NBFC Screener formulas — same Banking layout but uses IndAS structure.
+
+    Revenue          = Total Revenue From Operations
+    Interest         = Finance Costs
+    Expenses         = Total Expenses - Finance Costs - Depreciation
+    Employee Cost %  = Employee / Revenue * 100
+    Financing Profit = Revenue - Interest - Expenses
+    Financing Margin = Financing Profit / Revenue * 100
+    Tax %            = Total Tax / PBT * 100
+    Minority         = shown as negative
+    Profit for PE    = Net Profit - Minority
+    Profit for EPS   = Profit attributable to owners of parent
+    YOY Revenue %    = date-matched same quarter last year
+    YOY Profit %     = date-matched same quarter last year
+    """
+
+    def sub(a, b):
+        return [
+            (av - bv) if (av is not None and bv is not None) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def pct(a, b):
+        return [
+            round(av / bv * 100) if (av is not None and bv and bv != 0) else None
+            for av, bv in zip(a, b)
+        ]
+
+    revenue_v      = raw["revenue"]
+    interest_v     = raw["interest_expended"]
+    total_exp_v    = raw["total_expenses"]
+    dep_v          = raw["depreciation"]
+    emp_v          = raw["employee_cost"]
+    other_inc_v    = raw["other_income"]
+    exceptional_v  = raw["exceptional"]
+    pbt_v          = raw["pbt"]
+    tax_v          = raw["total_tax"]
+    net_profit_v   = raw["net_profit"]
+    minority_v     = raw["minority"]
+    profit_after_v = raw["profit_after_minority"]
+    profit_assoc_v = raw.get("profit_associates", [None] * n)
+
+    # ── Screener Expenses = Total - Finance - Depreciation ────────────────
+    expenses_v         = sub(sub(total_exp_v, interest_v), dep_v)
+
+    # ── Employee Cost % = Employee / Revenue * 100 ────────────────────────
+    emp_pct_v          = pct(emp_v, revenue_v)
+
+    # ── Financing Profit = Revenue - Interest - Expenses ──────────────────
+    financing_profit_v = [
+        (rv - iv - ev)
+        if (rv is not None and iv is not None and ev is not None) else None
+        for rv, iv, ev in zip(revenue_v, interest_v, expenses_v)
+    ]
+
+    # ── Financing Margin % = Financing Profit / Revenue * 100 ─────────────
+    financing_margin_v = pct(financing_profit_v, revenue_v)
+
+    # ── Other Income Normal = Other Income - Exceptional ──────────────────
+    other_inc_normal_v = sub(other_inc_v, exceptional_v)
+
+    # ── Tax % = Total Tax / PBT * 100 ─────────────────────────────────────
+    tax_pct_v          = pct(tax_v, pbt_v)
+
+    # ── Minority shown as negative ────────────────────────────────────────
+    minority_neg_v     = [(-v if v else 0) for v in minority_v]
+
+    # ── Exceptional AT ────────────────────────────────────────────────────
+    exceptional_at_v   = exceptional_v
+
+    # ── Profit excl Exceptional = Net Profit - Exceptional AT ────────────
+    profit_excl_v      = sub(net_profit_v, exceptional_at_v)
+
+    # ── Profit for PE = Net Profit - Minority ─────────────────────────────
+    profit_pe_v        = sub(net_profit_v, minority_v)
+
+    # ── Profit for EPS = Profit attributable to owners of parent ──────────
+    profit_eps_v       = profit_after_v
+
+    # ── YOY Revenue Growth % ──────────────────────────────────────────────
+    yoy_revenue_v      = yoy_growth(revenue_v, headers)
+
+    # ── YOY Profit Growth % ───────────────────────────────────────────────
+    yoy_profit_v       = yoy_growth(net_profit_v, headers)
+
+    return {
+        **raw,
+        "expenses":          expenses_v,
+        "emp_pct":           emp_pct_v,
+        "financing_profit":  financing_profit_v,
+        "financing_margin":  financing_margin_v,
+        "other_inc_normal":  other_inc_normal_v,
+        "tax_pct":           tax_pct_v,
+        "minority_neg":      minority_neg_v,
+        "exceptional_at":    exceptional_at_v,
+        "profit_excl":       profit_excl_v,
+        "profit_pe":         profit_pe_v,
+        "profit_eps":        profit_eps_v,
+        "profit_associates": profit_assoc_v,
+        "yoy_revenue":       yoy_revenue_v,
+        "yoy_profit":        yoy_profit_v,
+    }
+
+
+def _build_screener_rows_nbfc(derived: dict, n: int) -> list:
+    """Build Screener rows for NBFC — matches Bajaj Finance screener layout."""
+
+    def row(key, label, values, bold=False, children=None):
+        r = {"key": key, "label": label,
+             "type": "group" if children else "single",
+             "unit": "Rs Cr", "values": values}
+        if children:
+            r["children"] = children
+        if bold:
+            r["bold"] = True
+        return r
+
+    return [
+        row("revenue", "Revenue", derived["revenue"], bold=True, children=[
+            row("yoy_sales_growth_pct", "YOY Sales Growth %", derived["yoy_revenue"]),
+        ]),
+        row("interest",   "Interest",   derived["interest_expended"]),
+        row("expenses", "Expenses", derived["expenses"], bold=True, children=[
+            row("employee_cost_pct", "Employee Cost %", derived["emp_pct"]),
+        ]),
+        row("financing_profit",     "Financing Profit",   derived["financing_profit"], bold=True),
+        row("financing_margin_pct", "Financing Margin %", derived["financing_margin"]),
+        row("other_income", "Other Income", derived["other_income"], bold=True, children=[
+            row("exceptional_items",   "Exceptional Items",   derived["exceptional"]),
+            row("other_income_normal", "Other Income Normal", derived["other_inc_normal"]),
+        ]),
+        row("depreciation",      "Depreciation",      derived["depreciation"]),   # ← shown for NBFC
+        row("profit_before_tax", "Profit Before Tax", derived["pbt"],      bold=True),
+        row("tax_pct",           "Tax %",             derived["tax_pct"]),
+        row("net_profit", "Net Profit", derived["net_profit"], bold=True, children=[
+            row("profit_from_associates", "Profit from Associates", derived["profit_associates"]),
+            row("minority_share",          "Minority Share",        derived["minority_neg"]),
+            row("exceptional_items_at",    "Exceptional Items AT",  derived["exceptional_at"]),
+            row("profit_excl_exceptional", "Profit excl Excep",     derived["profit_excl"]),
+            row("profit_for_pe",           "Profit for PE",         derived["profit_pe"]),
+            row("profit_for_eps",          "Profit for EPS",        derived["profit_eps"]),
+            row("yoy_profit_growth_pct", "YOY Profit Growth %", derived["yoy_profit"]),
+        ]),
+        row("eps", "EPS in Rs", derived["eps"], children=[
+        ]),
+        row("gross_npa_pct", "Gross NPA %", derived["gross_npa_pct"]),
+        row("net_npa_pct", "Net NPA %", derived["net_npa_pct"])
+    ]
+
+
+def convert_to_screener_format_nbfc(old_values) -> dict:
+    if isinstance(old_values, str):
+        try:
+            old_values = json.loads(old_values)
+        except Exception as e:
+            print(f"  JSON parse error: {e}")
+            return None
+
+    if isinstance(old_values, list):
+        return _convert_list_format_nbfc(old_values)
+
+    if isinstance(old_values, dict):
+        return _convert_dict_format_nbfc(old_values)
+
+    print(f"  Unexpected type: {type(old_values)}")
+    return None
+
+
+def _convert_list_format_nbfc(old_values: list) -> dict:
+    if not old_values:
+        return None
+
+    first = old_values[0]
+
+    # Format A: list of lists
+    if isinstance(first, list):
+        print(f"  Format A: {len(old_values)} quarter lists")
+        headers, all_rows = [], []
+        for quarter_data in old_values:
+            meta = next((r for r in quarter_data
+                         if isinstance(r, dict) and "date" in r), {})
+            rows = [r for r in quarter_data
+                    if not (isinstance(r, dict) and "date" in r)]
+            headers.append(meta.get("date", ""))
+            all_rows.append(rows)
+        merged = _merge_quarters_to_rows(all_rows, headers)
+        return _convert_dict_format_nbfc(merged)
+
+    # Format B: list of per-quarter dicts
+    if isinstance(first, dict) and "date" in first:
+        print(f"  Format B: {len(old_values)} quarter dicts")
+        headers = [q.get("date", "") for q in old_values]
+        n       = len(headers)
+        raw     = _extract_raw_from_quarters_nbfc(old_values, n)
+        derived = _apply_screener_formulas_nbfc(raw, n, headers)
+        return {
+            "headers":     headers,
+            "rows":        _build_screener_rows_nbfc(derived, n),
+            "format_type": "NBFC",
+        }
+
+    # Format C: flat NSE rows
+    if isinstance(first, dict) and "key" in first:
+        print(f"  Format C: flat NSE rows")
+        headers = None
+        for r in old_values:
+            if isinstance(r, dict) and "headers" in r:
+                headers = r.get("headers")
+                break
+        if not headers:
+            sample  = next((r.get("values") for r in old_values if r.get("values")), [])
+            n       = len(sample)
+            headers = [f"Q{i+1}" for i in range(n)]
+            print(f"  WARNING: No headers found, using {headers}")
+        return _convert_dict_format_nbfc({"rows": old_values, "headers": headers})
+
+    return None
+
+
+def _convert_dict_format_nbfc(old_values: dict) -> dict:
+    rows    = old_values.get("rows", [])
+    headers = old_values.get("headers", [])
+    n       = len(headers)
+
+    if n == 0 or not rows:
+        return None
+
+    raw     = _extract_raw_from_rows_nbfc(rows, n)
+    derived = _apply_screener_formulas_nbfc(raw, n, headers)
+
+    return {
+        "headers":     headers,
+        "rows":        _build_screener_rows_nbfc(derived, n),
+        "format_type": "NBFC",
+    }
+
+
+#gi
+
+def get_val_list(key, rows_data, n):
+    """
+    Extract values list for a key from rows.
+    Always returns list of exactly length n.
+    Pads with None if values list is shorter than n.
+    """
+    for row in rows_data:
+        if not isinstance(row, dict):
+            continue
+        if row.get("key") == key:
+            vals = row.get("values", [])
+            # ── Pad or trim to exactly n ───────────────────────────────────
+            if len(vals) < n:
+                vals = list(vals) + [None] * (n - len(vals))
+            elif len(vals) > n:
+                vals = vals[:n]
+            return vals
+        if "children" in row:
+            result = get_val_list(key, row["children"], n)
+            if result and any(v is not None for v in result):
+                return result
+    return [None] * n
+
+def _extract_raw_from_rows_gi(rows: list, n: int) -> dict:
+    """
+    Extract raw values from NSE General Insurance format rows.
+    New India Assurance, United India Insurance etc.
+    """
+    def get(key):
+        return get_val_list(key, rows, n)
+
+    return {
+        # ── Sales = Premium Earned (Net) ───────────────────────────────────
+        "sales":                get("premium_earned_(net)"),
+
+        # ── Expenses = Total Expense (Operating) ──────────────────────────
+        "total_expenses":       get("total_expense"),
+
+        # ── Employee Cost ─────────────────────────────────────────────────
+        "employee_cost":        get("employees_remuneration_and_welfare_expenses"),
+
+        # ── Claims ────────────────────────────────────────────────────────
+        "claims_incurred":      get("total_incurred_claims"),
+        "commission":           get("net_commission"),
+
+        # ── Other Income (Non-operating) ──────────────────────────────────
+        "other_income":         get("other_income"),
+
+        # ── Exceptional ───────────────────────────────────────────────────
+        "exceptional":          [v or 0 for v in get("extraordinary_items")],
+
+        # ── Underwriting Profit/Loss ───────────────────────────────────────
+        "underwriting_profit":  get("underwriting_profit_loss"),
+
+        # ── PBT & Tax ─────────────────────────────────────────────────────
+        "pbt":                  get("profit/_(loss)_before_tax"),
+        "total_tax":            get("provision_for_tax"),
+        "current_tax":          get("provision_for_tax"),
+        "deferred_tax":         [None] * n,
+
+        # ── Net Profit ────────────────────────────────────────────────────
+        "net_profit":           get("profit_/_(loss)_after_tax"),
+
+        # ── Attributable ──────────────────────────────────────────────────
+        "profit_associates":    get("share_of_profit_loss_of_associates"),
+        "minority":             [v or 0 for v in get("profit_loss_of_minority_interest")],
+        "profit_owners":        get("profit_or_loss,_attributable_to_owners_of_parent"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                  get("basic_and_diluated_eps_before_extraordinary_items_(net_of_tax_expense)_for_the_period_(not_to_be_annualized)"),
+        "eps_diluted":          get("basic_and_diluted_eps_after_extraordinary_items"),
+
+        # ── Share Capital ─────────────────────────────────────────────────
+        "paid_up_capital":      get("paid_up_equity_capital"),
+        "face_value":           get("face_value_of_equity_share_capital"),
+        "reserves":             get("reserve_and_surplus_excluding_revaluation_reserve"),
+
+        # ── GI Specific Ratios ────────────────────────────────────────────
+        "combined_ratio":       get("combined_ratio"),
+        "incurred_claim_ratio": get("incurred_claim_ratio"),
+        "expense_mgmt_ratio":   get("expenses_of_management_ratio"),
+        "solvency_ratio":       get("solvency_ratio"),
+        "net_retention_ratio":  get("net_retention_ratio"),
+
+        # ── NPA ───────────────────────────────────────────────────────────
+        "gross_npa_pct":        get("percentage_of_gross_npas"),
+        "net_npa_pct":          get("percentage_of_net_npas"),
+
+        # ── Other ─────────────────────────────────────────────────────────
+        "debt_equity":          get("debt_equity_ratio"),
+        "other_comp":           get("other_comprehensive_income_net_of_taxes"),
+        "total_comp":           get("total_comprehensive_income_for_the_period"),
+    }
+
+
+def _extract_raw_from_quarters_gi(quarters: list, n: int) -> dict:
+    """Extract raw values from Format B quarters for GI."""
+    def get(field, fallback=None):
+        vals = [q.get(field) for q in quarters]
+        if fallback and all(v is None for v in vals):
+            vals = [q.get(fallback) for q in quarters]
+        return vals
+
+    def get_or_zero(field):
+        return [v or 0 for v in get(field)]
+
+    return {
+        "sales":                get("sales", "premium_earned"),
+        "total_expenses":       get("total_expenses"),
+        "employee_cost":        get("employee_cost"),
+        "claims_incurred":      get("claims_incurred"),
+        "commission":           get("commission"),
+        "other_income":         get("other_income"),
+        "exceptional":          get_or_zero("exceptional_items"),
+        "underwriting_profit":  get("underwriting_profit"),
+        "pbt":                  get("profit_before_tax"),
+        "total_tax":            get("total_tax", "provision_for_tax"),
+        "current_tax":          get("current_tax", "provision_for_tax"),
+        "deferred_tax":         [None] * n,
+        "net_profit":           get("net_profit"),
+        "profit_associates":    get("profit_from_associates"),
+        "minority":             get_or_zero("minority_share"),
+        "profit_owners":        get("profit_for_eps", "profit_owners"),
+        "eps":                  get("eps", "eps_basic"),
+        "eps_diluted":          get("eps_diluted"),
+        "paid_up_capital":      get("paid_up_equity_capital"),
+        "face_value":           get("face_value"),
+        "reserves":             get("reserves"),
+        "combined_ratio":       get("combined_ratio"),
+        "incurred_claim_ratio": get("incurred_claim_ratio"),
+        "expense_mgmt_ratio":   get("expense_mgmt_ratio"),
+        "solvency_ratio":       get("solvency_ratio"),
+        "net_retention_ratio":  get("net_retention_ratio"),
+        "gross_npa_pct":        get("gross_npa_pct"),
+        "net_npa_pct":          get("net_npa_pct"),
+        "debt_equity":          get("debt_equity_ratio"),
+        "other_comp":           get("other_comprehensive_income"),
+        "total_comp":           get("total_comprehensive_income"),
+    }
+
+
+def _apply_screener_formulas_gi(raw: dict, n: int, headers: list) -> dict:
+    """
+    GI Screener formulas:
+      Sales            = Premium Earned (Net)
+      Expenses         = Total Expense (Operating)
+      Employee Cost %  = Employee Cost / Sales * 100
+      Operating Profit = Sales - Expenses
+      OPM %            = Operating Profit / Sales * 100
+      Other Income     = Non-operating other income
+      Interest         = 0 (insurance companies)
+      Depreciation     = 0 (insurance companies)
+      Tax %            = Provision for Tax / PBT * 100
+      Minority         = shown as negative
+      Profit for PE    = Net Profit - Minority
+      Profit for EPS   = Profit attributable to owners
+      YOY Sales %      = date-matched
+      YOY Profit %     = date-matched
+    """
+
+    def sub(a, b):
+        return [
+            (av - bv) if (av is not None and bv is not None) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def pct(a, b):
+        return [
+            round(av / bv * 100) if (av is not None and bv and bv != 0) else None
+            for av, bv in zip(a, b)
+        ]
+
+    sales_v            = raw["sales"]
+    total_exp_v        = raw["total_expenses"]
+    emp_v              = raw["employee_cost"]
+    other_inc_v        = raw["other_income"]
+    exceptional_v      = raw["exceptional"]
+    pbt_v              = raw["pbt"]
+    tax_v              = raw["total_tax"]
+    net_profit_v       = raw["net_profit"]
+    minority_v         = raw["minority"]
+    profit_assoc_v     = raw.get("profit_associates", [None] * n)
+    owners_v           = raw["profit_owners"]
+
+    # Operating Profit = Sales - Expenses
+    op_profit_v        = sub(sales_v, total_exp_v)
+
+    # OPM % = Operating Profit / Sales * 100
+    opm_pct_v          = pct(op_profit_v, sales_v)
+
+    # Employee Cost % = Employee / Sales * 100
+    emp_pct_v          = pct(emp_v, sales_v)
+
+    # Other Income Normal = Other Income - Exceptional
+    other_inc_normal_v = sub(other_inc_v, exceptional_v)
+
+    # Tax % = Total Tax / PBT * 100
+    tax_pct_v          = pct(tax_v, pbt_v)
+
+    # Minority shown as negative
+    minority_neg_v     = [(-v if v else 0) for v in minority_v]
+
+    # Exceptional AT
+    exceptional_at_v   = exceptional_v
+
+    # Profit excl Exceptional = Net Profit - Exceptional AT
+    profit_excl_v      = sub(net_profit_v, exceptional_at_v)
+
+    # Profit for PE = Net Profit - Minority
+    profit_pe_v        = sub(net_profit_v, minority_v)
+
+    # Profit for EPS = Profit attributable to owners
+    profit_eps_v       = owners_v
+
+    # YOY
+    yoy_sales_v        = yoy_growth(sales_v, headers)
+    yoy_profit_v       = yoy_growth(net_profit_v, headers)
+
+    return {
+        **raw,
+        "op_profit":         op_profit_v,
+        "opm_pct":           opm_pct_v,
+        "emp_pct":           emp_pct_v,
+        "other_inc_normal":  other_inc_normal_v,
+        "tax_pct":           tax_pct_v,
+        "minority_neg":      minority_neg_v,
+        "exceptional_at":    exceptional_at_v,
+        "profit_excl":       profit_excl_v,
+        "profit_pe":         profit_pe_v,
+        "profit_eps":        profit_eps_v,
+        "profit_associates": profit_assoc_v,
+        "yoy_sales":         yoy_sales_v,
+        "yoy_profit":        yoy_profit_v,
+    }
+
+
+def _build_screener_rows_gi(derived: dict, n: int) -> list:
+    """Build Screener rows for GI — matches New India Assurance layout."""
+
+    def row(key, label, values, bold=False, children=None):
+        r = {"key": key, "label": label,
+             "type": "group" if children else "single",
+             "unit": "Rs Cr", "values": values}
+        if children:
+            r["children"] = children
+        if bold:
+            r["bold"] = True
+        return r
+
+    return [
+        # ── Sales ─────────────────────────────────────────────────────────
+        row("sales", "Sales", derived["sales"], bold=True, children=[
+            row("yoy_sales_growth_pct", "YOY Sales Growth %", derived["yoy_sales"]),
+        ]),
+
+        # ── Expenses ──────────────────────────────────────────────────────
+        row("expenses", "Expenses", derived["total_expenses"], bold=True, children=[
+            row("employee_cost_pct", "Employee Cost %", derived["emp_pct"]),
+        ]),
+
+        # ── Operating Profit ──────────────────────────────────────────────
+        row("operating_profit", "Operating Profit", derived["op_profit"], bold=True),
+        row("opm_pct",          "OPM %",            derived["opm_pct"]),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        row("other_income", "Other Income", derived["other_income"], bold=True, children=[
+            row("other_income_normal", "Other Income Normal", derived["other_inc_normal"]),
+        ]),
+
+        # ── Interest & Depreciation (0 for insurance) ─────────────────────
+        row("interest",     "Interest",     [0] * n),
+        row("depreciation", "Depreciation", [0] * n),
+
+        # ── Profit Before Tax ─────────────────────────────────────────────
+        row("profit_before_tax", "Profit Before Tax", derived["pbt"],      bold=True),
+        row("tax_pct",           "Tax %",             derived["tax_pct"]),
+
+        # ── Net Profit ────────────────────────────────────────────────────
+        row("net_profit", "Net Profit", derived["net_profit"], bold=True, children=[
+            row("profit_from_associates", "Profit from Associates", derived["profit_associates"]),
+            row("minority_share",          "Minority Share",        derived["minority_neg"]),
+            row("exceptional_items_at",    "Exceptional Items AT",  derived["exceptional_at"]),
+            row("profit_excl_exceptional", "Profit excl Excep",     derived["profit_excl"]),
+            row("profit_for_pe",           "Profit for PE",         derived["profit_pe"]),
+            row("profit_for_eps",          "Profit for EPS",        derived["profit_eps"]),
+            row("yoy_profit_growth_pct", "YOY Profit Growth %", derived["yoy_profit"]),
+        ]),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        row("eps", "EPS in Rs", derived["eps"], children=[
+        ]),
+    ]
+
+
+# ── Main converters ───────────────────────────────────────────────────────────
+
+def convert_to_screener_format_gi(old_values) -> dict:
+    if isinstance(old_values, str):
+        try:
+            old_values = json.loads(old_values)
+        except Exception as e:
+            print(f"  JSON parse error: {e}")
+            return None
+
+    if isinstance(old_values, list):
+        return _convert_list_format_gi(old_values)
+
+    if isinstance(old_values, dict):
+        return _convert_dict_format_gi(old_values)
+
+    print(f"  Unexpected type: {type(old_values)}")
+    return None
+
+
+def _convert_list_format_gi(old_values: list) -> dict:
+    if not old_values:
+        return None
+
+    first = old_values[0]
+
+    # Format A: list of lists
+    if isinstance(first, list):
+        headers, all_rows = [], []
+        for quarter_data in old_values:
+            meta = next((r for r in quarter_data
+                         if isinstance(r, dict) and "date" in r), {})
+            rows = [r for r in quarter_data
+                    if not (isinstance(r, dict) and "date" in r)]
+            headers.append(meta.get("date", ""))
+            all_rows.append(rows)
+        merged = _merge_quarters_to_rows(all_rows, headers)
+        return _convert_dict_format_gi(merged)
+
+    # Format B: list of per-quarter dicts
+    if isinstance(first, dict) and "date" in first:
+        headers = [q.get("date", "") for q in old_values]
+        n       = len(headers)
+        raw     = _extract_raw_from_quarters_gi(old_values, n)
+        derived = _apply_screener_formulas_gi(raw, n, headers)
+        return {
+            "headers":     headers,
+            "rows":        _build_screener_rows_gi(derived, n),
+            "format_type": "GI",
+        }
+
+    # Format C: flat NSE rows
+    if isinstance(first, dict) and "key" in first:
+        headers = None
+        for r in old_values:
+            if isinstance(r, dict) and "headers" in r:
+                headers = r.get("headers")
+                break
+        if not headers:
+            sample  = next((r.get("values") for r in old_values if r.get("values")), [])
+            n       = len(sample)
+            headers = [f"Q{i+1}" for i in range(n)]
+        return _convert_dict_format_gi({"rows": old_values, "headers": headers})
+
+    return None
+
+
+def _convert_dict_format_gi(old_values: dict) -> dict:
+    rows    = old_values.get("rows", [])
+    headers = old_values.get("headers", [])
+    n       = len(headers)
+
+    if n == 0 or not rows:
+        return None
+
+    raw     = _extract_raw_from_rows_gi(rows, n)
+    derived = _apply_screener_formulas_gi(raw, n, headers)
+
+    return {
+        "headers":     headers,
+        "rows":        _build_screener_rows_gi(derived, n),
+        "format_type": "GI",
+    }
+
+def _merge_quarters_to_rows(all_rows: list, headers: list) -> dict:
+    """
+    Merge per-quarter row lists into single dict format.
+    Always fills missing quarters with None — never skips.
+    """
+    if not all_rows:
+        return {"rows": [], "headers": headers}
+
+    n      = len(headers)
+    merged = {}
+
+    for q_idx, rows in enumerate(all_rows):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            key = r.get("key")
+            if not key:
+                continue
+
+            # ── Initialize with None for ALL quarters ──────────────────────
+            if key not in merged:
+                merged[key] = {
+                    "key":    key,
+                    "label":  r.get("label", ""),
+                    "type":   r.get("type", "single"),
+                    "unit":   r.get("unit", "Rs Cr"),
+                    "values": [None] * n,    # ← all None by default
+                }
+
+            # ── Fill only this quarter's value ─────────────────────────────
+            vals = r.get("values", [])
+            if vals:
+                # values[0] is this quarter's value
+                merged[key]["values"][q_idx] = vals[0]
+            # else: stays None for this quarter ✓
+
+    return {"rows": list(merged.values()), "headers": headers}
+
+# ── Main converters ───────────────────────────────────────────────────────────
+
+async def convert_existing_nse_to_screener(response_list: list) -> dict:
+    # return convert_to_screener_format(response_list)
+    # return convert_to_screener_format_banking(response_list)
+    # return convert_to_screener_format_nbfc(response_list)
+    return convert_to_screener_format_gi(response_list)
+
+
+# async def bse_decide_quarterly_format(response_list: list) -> dict:
+#     return convert_to_screener_format(response_list)

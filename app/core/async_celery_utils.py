@@ -34,7 +34,7 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow, \
     update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values, \
     fetch_integrated_filing_financials_data_from_nse_for_book_value, \
-    fetch_integrated_filing_financials_data_for_roce_from_nse
+    fetch_integrated_filing_financials_data_for_roce_from_nse, convert_existing_nse_to_screener
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
@@ -2678,3 +2678,91 @@ async def fetch_calculate_and_update_stock_roce_data_async():
         await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
         await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
         await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def convert_stock_quarterly_result_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    current_processed_symbols = []
+    processed_symbols = []
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                QuarterlyResultDateset,
+                CompanyStock.id == QuarterlyResultDateset.company_id
+            )
+            # .where(QuarterlyResultDateset.company_id.is_(None))
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_quarterly_result()
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[:100]
+
+        # current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        #
+        # await save_quarterly_result_processed_symbol(current_processed_symbols, "processing")
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        for chunk in chunk_list(missing_symbols, 50):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    with db.begin_nested():
+                        existing_dataset = db.execute(
+                            select(QuarterlyResultDateset)
+                            .where(QuarterlyResultDateset.company_id == company.id)
+                        ).scalar_one_or_none()
+                        print(existing_dataset)
+
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        if nse_company_list and bse_company_list:
+                            old_values = existing_dataset.values
+                            # old_values = json.loads(old_values)
+                            print(old_values, type(old_values))
+                            converted = await convert_existing_nse_to_screener(old_values)
+                            print(converted, "ookkkk")
+                            if not converted:
+                                converted = {
+                                    "rows": [],
+                                    "headers": [],
+                                    "format_type": []
+                                }
+                        elif bse_company_list:
+                            pass
+                        elif nse_company_list:
+                            pass
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        # await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
+        # await save_quarterly_result_processed_symbol(error_symbols, "error")
+        # await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
+        # await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
