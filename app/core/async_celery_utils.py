@@ -33,7 +33,8 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     parse_balance_sheet, make_short_company_name, find_by_scripcode, parse_profit_loss, parse_cash_flow, \
     fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow, \
     update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values, \
-    fetch_integrated_filing_financials_data_from_nse_for_book_value
+    fetch_integrated_filing_financials_data_from_nse_for_book_value, \
+    fetch_integrated_filing_financials_data_for_roce_from_nse
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
@@ -2281,6 +2282,383 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                             unsaved_symbols.append(company.nse_symbol)
                             continue
                         company.details.book_value = book_value
+                        processed_symbols.append(company.nse_symbol)
+                    except Exception as e:
+                        savepoint.rollback()
+                        raise
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+
+async def fetch_calculate_and_update_stock_roce_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    processed_symbols = []
+    file_name = "nse_bse_stocks_roce"
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+
+        missing_symbols = missing_symbols[:5]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+
+        def to_decimal(val):
+            try:
+                return Decimal(str(val or "0").replace(",", ""))
+            except Exception:
+                return Decimal("0")
+
+        def find_by_date(data, target_date):
+            return next((item for item in data if item["date"] == target_date), None)
+
+        for chunk in chunk_list(missing_symbols, 1):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    savepoint = db.begin_nested()
+                    try:
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        roce = None
+                        if nse_company_list and bse_company_list:
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            output_obj = []
+                            output_financial_data_list = []
+                            ebit = 0
+                            if integrated_filing_financials_list:
+                                consolidated_list = []
+                                standalone_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    type_sub = integrated_filing_obj.get("type_Sub")
+                                    qe_date = integrated_filing_obj.get("qe_Date")
+                                    if type_sub == "Revision":
+                                        continue
+                                    if consolidated == "Consolidated" and "MAR" in qe_date:
+                                        consolidated_list.append(integrated_filing_obj)
+                                    elif consolidated == "Standalone" and "MAR" in qe_date:
+                                        standalone_list.append(integrated_filing_obj)
+                                if consolidated_list and len(consolidated_list) == 2:
+                                    for i in consolidated_list:
+                                        ixbrl = i.get("ixbrl")
+                                        qe_Date = i.get("qe_Date")
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                                ixbrl)
+                                        output['date'] = qe_Date
+                                        output['amount_type'] = amount_type
+                                        output['format_type'] = format_type
+
+                                        output_f_data, amount_type, format_type = await fetch_integrated_filing_financials_data_for_roce_from_nse(
+                                            ixbrl)
+                                        output_obj.append(output)
+                                        output_f_data['date'] = qe_Date
+                                        output_f_data['amount_type'] = amount_type
+                                        output_f_data['format_type'] = format_type
+                                        output_financial_data_list.append(output_f_data)
+
+                                if not output_obj or not output_financial_data_list:
+                                    output_obj = []
+                                    output_financial_data_list = []
+                                    if standalone_list and len(standalone_list) == 2:
+                                        for i in standalone_list:
+                                            ixbrl = i.get("ixbrl")
+                                            qe_Date = i.get("qe_Date")
+                                            output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                                    ixbrl)
+                                            output['date'] = qe_Date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_f_data, amount_type, format_type = await fetch_integrated_filing_financials_data_for_roce_from_nse(
+                                                ixbrl)
+                                            output_obj.append(output)
+                                            output_f_data['date'] = qe_Date
+                                            output_f_data['amount_type'] = amount_type
+                                            output_f_data['format_type'] = format_type
+                                            output_financial_data_list.append(output_f_data)
+
+                                if not output_obj or not output_financial_data_list:
+                                    unsaved_symbols.append(company.nse_symbol)
+                                    continue
+                                ist = pytz.timezone("Asia/Kolkata")
+                                current_year = datetime.now(ist).year
+                                for output_financial_data_obj in output_financial_data_list:
+                                    if f"MAR-{current_year}" in output_financial_data_obj.get("date"):
+                                        if output_financial_data_obj.get("format_type") == "INDAS":
+                                            ebit = output_financial_data_obj.get("Finance costs") + output_financial_data_obj.get("Total profit before tax")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "BANKING":
+                                            ebit = output_financial_data_obj.get(
+                                                "Total profit (loss) from ordinary activities before tax") + output_financial_data_obj.get(
+                                                "Interest expenses")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "NBFC":
+                                            ebit = output_financial_data_obj.get(
+                                                "Total profit before tax") + output_financial_data_obj.get(
+                                                "Finance costs")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "GI":
+                                            ebit = output_financial_data_obj.get(
+                                                "Profit / Loss before extraordinary items")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "LI":
+                                            ebit = output_financial_data_obj.get(
+                                                "Profit/ (loss) before tax")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                total_capital_employed = 0
+                                for out in output_obj:
+                                    if out.get("format_type") == "INDAS":
+                                        equity_share_capital = to_decimal(out.get("Equity share capital"))
+                                        other_equity = to_decimal(out.get("Other equity"))
+                                        borrowing_current = to_decimal(out.get("Borrowings, current"))
+                                        borrowing_non_current = to_decimal(out.get("Borrowings, non-current"))
+                                        total = equity_share_capital + other_equity + borrowing_current + borrowing_non_current
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "BANKING":
+                                        equity_share_capital = to_decimal(out.get("Total Assets"))
+                                        total = equity_share_capital
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "NBFC":
+                                        equity_share_capital = to_decimal(out.get("Equity share capital"))
+                                        other_equity = to_decimal(out.get("Other equity"))
+                                        debt_securities = to_decimal(out.get("Debt Securities"))
+                                        borrowing = to_decimal(out.get("Borrowings (Other than Debt Securities)"))
+                                        deposits = to_decimal(out.get("Deposits"))
+                                        subordinated_liabilities = to_decimal(out.get("Subordinated Liabilities"))
+                                        total = equity_share_capital + other_equity + debt_securities + borrowing + deposits + subordinated_liabilities
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "GI":
+                                        equity_share_capital = to_decimal(out.get("Share capital"))
+                                        other_equity = to_decimal(out.get("Reserves and surplus"))
+                                        borrowings = to_decimal(out.get("Borrowings"))
+                                        total = equity_share_capital + other_equity + borrowings
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "LI":
+                                        equity_share_capital = to_decimal(out.get("Share capital"))
+                                        other_equity = to_decimal(out.get("Reserves and surplus"))
+                                        share_application_money = to_decimal(out.get("Share application money received pending allotment of shares"))
+                                        credit_fair_value = to_decimal(out.get("Credit (Debit) Fair value change account"))
+                                        borrowings = to_decimal(out.get("Borrowings"))
+                                        funds_for_appropriations = to_decimal(out.get("Funds for Future Appropriations"))
+                                        total = equity_share_capital + other_equity + share_application_money + credit_fair_value + borrowings + funds_for_appropriations
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                if total_capital_employed and ebit:
+                                    avg_capital_employed = float(total_capital_employed) / 2
+                                    roce = (float(ebit) / avg_capital_employed) * 100
+                                    roce = round(roce, 2)
+
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
+                        elif nse_company_list:
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            output_obj = []
+                            output_financial_data_list = []
+                            ebit = 0
+                            if integrated_filing_financials_list:
+                                consolidated_list = []
+                                standalone_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    type_sub = integrated_filing_obj.get("type_Sub")
+                                    qe_date = integrated_filing_obj.get("qe_Date")
+                                    if type_sub == "Revision":
+                                        continue
+                                    if consolidated == "Consolidated" and "MAR" in qe_date:
+                                        consolidated_list.append(integrated_filing_obj)
+                                    elif consolidated == "Standalone" and "MAR" in qe_date:
+                                        standalone_list.append(integrated_filing_obj)
+                                if consolidated_list and len(consolidated_list) == 2:
+                                    for i in consolidated_list:
+                                        ixbrl = i.get("ixbrl")
+                                        qe_Date = i.get("qe_Date")
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                            ixbrl)
+                                        output['date'] = qe_Date
+                                        output['amount_type'] = amount_type
+                                        output['format_type'] = format_type
+
+                                        output_f_data, amount_type, format_type = await fetch_integrated_filing_financials_data_for_roce_from_nse(
+                                            ixbrl)
+                                        output_obj.append(output)
+                                        output_f_data['date'] = qe_Date
+                                        output_f_data['amount_type'] = amount_type
+                                        output_f_data['format_type'] = format_type
+                                        output_financial_data_list.append(output_f_data)
+
+                                if not output_obj or not output_financial_data_list:
+                                    output_obj = []
+                                    output_financial_data_list = []
+                                    if standalone_list and len(standalone_list) == 2:
+                                        for i in standalone_list:
+                                            ixbrl = i.get("ixbrl")
+                                            qe_Date = i.get("qe_Date")
+                                            output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse_for_book_value(
+                                                ixbrl)
+                                            output['date'] = qe_Date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_f_data, amount_type, format_type = await fetch_integrated_filing_financials_data_for_roce_from_nse(
+                                                ixbrl)
+                                            output_obj.append(output)
+                                            output_f_data['date'] = qe_Date
+                                            output_f_data['amount_type'] = amount_type
+                                            output_f_data['format_type'] = format_type
+                                            output_financial_data_list.append(output_f_data)
+
+                                if not output_obj or not output_financial_data_list:
+                                    unsaved_symbols.append(company.nse_symbol)
+                                    continue
+                                ist = pytz.timezone("Asia/Kolkata")
+                                current_year = datetime.now(ist).year
+                                for output_financial_data_obj in output_financial_data_list:
+                                    if f"MAR-{current_year}" in output_financial_data_obj.get("date"):
+                                        if output_financial_data_obj.get("format_type") == "INDAS":
+                                            ebit = output_financial_data_obj.get(
+                                                "Finance costs") + output_financial_data_obj.get(
+                                                "Total profit before tax")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "BANKING":
+                                            ebit = output_financial_data_obj.get(
+                                                "Total profit (loss) from ordinary activities before tax") + output_financial_data_obj.get(
+                                                "Interest expenses")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "NBFC":
+                                            ebit = output_financial_data_obj.get(
+                                                "Total profit before tax") + output_financial_data_obj.get(
+                                                "Finance costs")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "GI":
+                                            ebit = output_financial_data_obj.get(
+                                                "Profit / Loss before extraordinary items")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                        elif output_financial_data_obj.get("format_type") == "LI":
+                                            ebit = output_financial_data_obj.get(
+                                                "Profit/ (loss) before tax")
+                                            if output_financial_data_obj.get("amount_type") == "Crores":
+                                                ebit = ebit / 100000
+                                total_capital_employed = 0
+                                for out in output_obj:
+                                    if out.get("format_type") == "INDAS":
+                                        equity_share_capital = to_decimal(out.get("Equity share capital"))
+                                        other_equity = to_decimal(out.get("Other equity"))
+                                        borrowing_current = to_decimal(out.get("Borrowings, current"))
+                                        borrowing_non_current = to_decimal(out.get("Borrowings, non-current"))
+                                        total = equity_share_capital + other_equity + borrowing_current + borrowing_non_current
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "BANKING":
+                                        equity_share_capital = to_decimal(out.get("Total Assets"))
+                                        total = equity_share_capital
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "NBFC":
+                                        equity_share_capital = to_decimal(out.get("Equity share capital"))
+                                        other_equity = to_decimal(out.get("Other equity"))
+                                        debt_securities = to_decimal(out.get("Debt Securities"))
+                                        borrowing = to_decimal(out.get("Borrowings (Other than Debt Securities)"))
+                                        deposits = to_decimal(out.get("Deposits"))
+                                        subordinated_liabilities = to_decimal(out.get("Subordinated Liabilities"))
+                                        total = equity_share_capital + other_equity + debt_securities + borrowing + deposits + subordinated_liabilities
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "GI":
+                                        equity_share_capital = to_decimal(out.get("Share capital"))
+                                        other_equity = to_decimal(out.get("Reserves and surplus"))
+                                        borrowings = to_decimal(out.get("Borrowings"))
+                                        total = equity_share_capital + other_equity + borrowings
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                    elif out.get("format_type") == "LI":
+                                        equity_share_capital = to_decimal(out.get("Share capital"))
+                                        other_equity = to_decimal(out.get("Reserves and surplus"))
+                                        share_application_money = to_decimal(
+                                            out.get("Share application money received pending allotment of shares"))
+                                        credit_fair_value = to_decimal(
+                                            out.get("Credit (Debit) Fair value change account"))
+                                        borrowings = to_decimal(out.get("Borrowings"))
+                                        funds_for_appropriations = to_decimal(
+                                            out.get("Funds for Future Appropriations"))
+                                        total = equity_share_capital + other_equity + share_application_money + credit_fair_value + borrowings + funds_for_appropriations
+                                        if out.get("amount_type") == "Crores":
+                                            total = total / 100000
+                                        total_capital_employed += total
+                                if total_capital_employed and ebit:
+                                    avg_capital_employed = float(total_capital_employed) / 2
+                                    roce = (float(ebit) / avg_capital_employed) * 100
+                                    roce = round(roce, 2)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
+                        elif bse_company_list:
+                            pass
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
+                        company.details.roce = roce
                         processed_symbols.append(company.nse_symbol)
                     except Exception as e:
                         savepoint.rollback()

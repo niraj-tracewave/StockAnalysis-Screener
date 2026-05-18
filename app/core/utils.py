@@ -1236,6 +1236,74 @@ async def fetch_th_tr_from_table(rows_data):
     return final_data
 
 
+async def fetch_th_tr_from_table_for_roce(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        # print(ths, tds)
+        if ths:
+            if len(ths) > 1:
+                th = ths[1]
+                for td in th.find_all("td"):
+                    td.extract()
+                section_name = th.get_text(strip=True)
+            else:
+                section_name = None
+            # section_name = ths[1].get_text(strip=True) if len(ths) > 1 else None
+            f_json['heading'] = section_name
+            if tds:
+                if len(tds) == 3:
+                    section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+                    f_json['heading'] = section_name
+                    text = tds[2].get_text(strip=True) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                elif len(tds) == 2 and len(ths) == 2:
+                    section_name = await extract_text(ths[1]) if len(ths) == 2 else None
+                    f_json['heading'] = section_name
+                    text = tds[1].get_text(strip=True) if len(tds) == 2 else None
+                    value = await parse_numeric(text)
+                elif len(tds) == 2 and len(ths) == 1:
+                    section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                    f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                    text = tds[1].get_text(strip=True) if len(tds) == 2 else None
+
+                    value = await parse_numeric(text)
+
+                else:
+                    text = await extract_text(tds[1]) if len(tds) > 1 else None
+                    value = await parse_numeric(text)
+                f_json['value'] = value
+            else:
+                j_value = await parse_row_dynamic(ths)
+                if j_value:
+                    j_heading = j_value.get("heading")
+                    if j_heading:
+                        result = j_heading.split()
+                        if result:
+                            remove_vals = {j_value.get('current_value'), j_value.get('previous_value')}
+
+                            data = [x for x in result if x not in remove_vals]
+                            heading = " ".join(data)
+                        if heading:
+                            f_json['heading'] = heading
+                    value = await parse_numeric(j_value.get("current_value"))
+                    f_json['value'] = value
+
+            final_data.append(f_json)
+    return final_data
+
+
+
 async def fetch_th_tr_from_gi_table(rows_data):
     final_data = []
     for row in rows_data:
@@ -1268,6 +1336,46 @@ async def fetch_th_tr_from_gi_table(rows_data):
                 section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
                 f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
                 text = tds[0].get_text(strip=True) if len(tds) == 2 else None
+
+                value = await parse_numeric(text)
+                f_json['value'] = value
+
+            final_data.append(f_json)
+    return final_data
+
+
+async def fetch_th_tr_from_gi_table_for_roce(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        if tds:
+            if len(tds) == 3:
+                section_name = await extract_text(tds[1]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+            elif len(tds) == 1:
+                section_name = await extract_text(tds[0]) if len(tds) == 1 else None
+                f_json['heading'] = section_name
+
+            elif len(tds) == 4:
+                section_name = await extract_text(tds[1]) if len(tds) == 4 else None
+                f_json['heading'] = section_name
+                text = tds[3].get_text(strip=True) if len(tds) == 4 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+            elif len(tds) == 2 and len(ths) == 1:
+                section_name = await get_heading_from_row(ths[0]) if len(ths) == 1 else None
+                f_json['heading'] = re.sub(r'\s+\d[\d,]*\.\d+', '', section_name).strip()
+                text = tds[1].get_text(strip=True) if len(tds) == 2 else None
 
                 value = await parse_numeric(text)
                 f_json['value'] = value
@@ -1339,6 +1447,92 @@ async def fetch_th_tr_from_li_table(rows_data):
                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
                     f_json["heading"] = titles.get(section_name)
                 text = ths[2].get_text(strip=True) if len(ths) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 1:
+                section_name = await extract_text(ths[0]) if len(ths) > 0 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+
+        final_data.append(f_json)
+    return final_data
+
+async def fetch_th_tr_from_li_table_for_roce(rows_data):
+    final_data = []
+    previous_raw = None
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        ths = row.find_all("th", recursive=False)
+        tds = row.find_all("td")
+        f_json: dict[str, str | None] = {
+            "heading": None,
+            "value": None,
+        }
+        titles = {"Gross NPAs" : "Shareholders Gross NPAs",
+                  "Net NPAs": "Shareholders Net NPAs",
+                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+                  "Without unrealised gains":  "Shareholders Without unrealised gains",
+                  "With unrealised gains": "Shareholders With unrealised gains"}
+        if tds:
+            if len(ths) == 2 and len(tds) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name) or section_name
+                text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 1 and len(tds) == 3:
+                section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                text = tds[2].get_text(strip=True) if len(tds) > 1 else None
+                value = await parse_numeric(text)
+                f_json['value'] = value
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 2 and len(tds) == 1:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+        else:
+            if len(ths) == 3:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 4:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                text = ths[3].get_text(strip=True) if len(ths) > 1 else None
                 value = await parse_numeric(text)
                 f_json['value'] = value
                 if section_name == "NPA ratios: (for shareholders' fund)":
@@ -4199,6 +4393,173 @@ async def fetch_indas_key_values(li_table):
         result[label] = value
     return result
 
+
+async def fetch_li_key_values_for_roce(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    Handles duplicate keys by appending _2, _3, etc.
+    """
+
+    def get_unique_key(result, label):
+        """Returns a unique key by appending _2, _3, etc. if key already exists."""
+        if label not in result:
+            return label
+        counter = 2
+        while f"{label}_{counter}" in result:
+            counter += 1
+        return f"{label}_{counter}"
+
+    result = {}
+    if li_table is None:
+        return result
+
+    rows = li_table.find_all("tr")
+    main_heading = None
+    heading_mapping = {
+        "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+        "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+        "Total Trade payable": "Total Trade payable, current"
+    }
+
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+
+        label = None
+
+        # Try extracting label from <th> tags
+        for th in ths:
+            b_tag = th.find("b")
+            text = b_tag.get_text(strip=True) if b_tag else th.get_text(strip=True)
+            if text and not text.isdigit():
+                label = text
+                break
+
+        # Fallback: try extracting label from <td> tags
+        if label is None:
+            for td in tds:
+                b_tag = td.find("b")
+                text = b_tag.get_text(strip=True) if b_tag else td.get_text(strip=True)
+                if text and not text.isdigit():
+                    label = text
+                    break
+
+        if label is None:
+            continue
+
+        print(label, "--ll------llll-----")
+
+        # Track main heading for context
+        if label == "Current liabilities":
+            main_heading = label
+
+        # Apply heading mapping if under "Current liabilities"
+        if main_heading == "Current liabilities":
+            label = heading_mapping.get(label, label)
+
+        # Extract value from last <td>
+        value = None
+        if tds:
+            last_td = tds[-1]
+            b_tag = last_td.find("b")
+            value = b_tag.get_text(strip=True) if b_tag else last_td.get_text(strip=True)
+
+        # Fallback: extract value from last <th>
+        if value is None and ths:
+            last_th = ths[-1]
+            b_tag = last_th.find("b")
+            value = b_tag.get_text(strip=True) if b_tag else last_th.get_text(strip=True)
+
+        # Store with unique key to avoid overwriting duplicates
+        unique_label = get_unique_key(result, label)
+        result[unique_label] = value
+
+    return result
+
+def is_index_label(text):
+    """
+    Returns True if the text is just an index marker like:
+    (C ), (a), (b), (i), (ii), II), 2.1, 1, etc.
+    """
+    text = text.strip()
+    pattern = r'^[\(\[]?([A-Za-z]{1,4}|\d+(\.\d+)?)[\)\]\s]*$'
+    return bool(re.fullmatch(pattern, text))
+
+
+async def fetch_nbfc_key_values(li_table):
+    """
+    Extracts key-value pairs from LI financial table
+    e.g. {"Share capital": "6,32,500.00", "Reserves and surplus": "1,35,01,552.00"}
+    """
+    result = {}
+    if li_table is None:
+        return result
+    rows = li_table.find_all("tr")
+    main_heading = None
+    heading_mapping = {
+        "(A) Total outstanding dues of micro enterprises and small enterprises": "(A) Total outstanding dues of micro enterprises and small enterprises, current",
+        "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises": "(B) Total outstanding dues of creditors other than micro enterprises and small enterprises, current",
+        "Total Trade payable": "Total Trade payable, current"
+    }
+    for tr in rows:
+        ths = tr.find_all("th")
+        tds = tr.find_all("td")
+        label = None
+
+        for th in ths:
+            b_tag = th.find("b")
+            if b_tag:
+                text = b_tag.get_text(strip=True)
+            else:
+                text = th.get_text(strip=True)
+            if text and not text.isdigit() and not is_index_label(text):
+                label = text
+                break
+
+        if label is None:
+            for td in tds:
+                b_tag = td.find("b")
+                if b_tag:
+                    text = b_tag.get_text(strip=True)
+                else:
+                    text = td.get_text(strip=True)
+                if text and not text.isdigit() and not is_index_label(text):
+                    label = text
+                    break
+
+        if label is None:
+            continue
+
+        print(label, "--ll------llll-----")
+
+        if label == "Current liabilities":
+            main_heading = label
+
+        value = None
+        if tds:
+            last_td = tds[-1]
+            b_tag = last_td.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_td.get_text(strip=True)
+
+        if value is None and ths:
+            last_th = ths[-1]
+            b_tag = last_th.find("b")
+            if b_tag:
+                value = b_tag.get_text(strip=True)
+            else:
+                value = last_th.get_text(strip=True)
+
+        if main_heading == "Current liabilities":
+            label = heading_mapping.get(label, label)
+
+        result[label] = value
+
+    return result
+
 # async def fetch_banking_key_values(li_table):
 #     """
 #     Extracts key-value pairs from LI financial table
@@ -4565,7 +4926,7 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                 if "Sources of Funds" in table_text:
                                     target_table = next_table
                                     break
-                result = await fetch_li_key_values(target_table)
+                result = await fetch_li_key_values_for_roce(target_table)
                 return result, value, "LI"
             elif "_NBFC_INDAS_" in url:
                 target_table = None
@@ -4596,7 +4957,7 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                                 if "Finanical Asset" in table_text:
                                     target_table = next_table
                                     break
-                result = await fetch_indas_key_values(target_table)
+                result = await fetch_nbfc_key_values(target_table)
                 return result, value, "NBFC"
             elif "_INDAS_" in url:
                 target_table = None
@@ -4682,6 +5043,169 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
                             break
                 result = await fetch_indas_key_values(target_table)
                 return result, value, "GI"
+
+        return structured_with_values, None, None
+    except Exception as e:
+        return [], None, None
+
+async def convert_to_dict(data):
+    result = {}
+    seen_keys = {}
+
+    for item in data:
+        if not isinstance(item, dict) or item.get('heading') is None:
+            continue
+
+        key = ' '.join(item['heading'].split())
+        value = item['value']
+
+        if key in seen_keys:
+            seen_keys[key] += 1
+            key = f"{key} ({seen_keys[key]})"
+        else:
+            seen_keys[key] = 1
+
+        result[key] = value
+
+    return result
+
+async def fetch_integrated_filing_financials_data_for_roce_from_nse(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/",
+            "Connection": "keep-alive"
+        }
+
+        session.get("https://www.nseindia.com", headers=headers)
+
+        path = url.split("nsearchives.nseindia.com")[-1]
+
+        headers = {
+            "authority": "nsearchives.nseindia.com",
+            "method": "GET",
+            "path": path,
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "if-none-match": "W/\"46855-1768223605988\"",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            heading = soup.find("h3", string=lambda x: x and "General information" in x)
+            gITable = heading.find_next("table")
+            table_data = await extract_table_as_dict(soup, gITable)
+            value = table_data.get("Level of rounding used in financial results", "Crores")
+
+            if "_GI_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                total_rows = []
+                if tables and len(tables) > 1:
+                    for table1 in tables[:4]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[:5]:
+                        table = table1
+                        rows = [
+                            tr for tr in table.find_all("tr")
+                            if tr.get_text(strip=True)
+                        ]
+                        total_rows.extend(rows)
+                final_data = await fetch_th_tr_from_gi_table_for_roce(total_rows)
+                final_data = await convert_to_dict(final_data)
+                return final_data, value, "GI"
+            elif "_LI_" in url:
+                total_rows = []
+                tables = soup.find_all("table")
+                for table1 in tables[3:5]:
+                    table = table1
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    total_rows.extend(rows)
+                final_data = await fetch_th_tr_from_li_table_for_roce(total_rows)
+                final_data = await convert_to_dict(final_data)
+                return final_data, value, "LI"
+            elif "_NBFC_INDAS_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table_for_roce(rows)
+                final_data = await convert_to_dict(final_data)
+                return final_data, value, "NBFC"
+            elif "_INDAS_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table_for_roce(rows)
+                final_data = await convert_to_dict(final_data)
+                return final_data, value, "INDAS"
+            elif "_BANKING_" in url:
+                other_tables = soup.find_all("table", class_="customTablewidth3Col")
+                table = None
+                if other_tables:
+                    for table1 in other_tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table_for_roce(rows)
+                final_data = await convert_to_dict(final_data)
+                return final_data, value, "BANKING"
 
         return structured_with_values, None, None
     except Exception as e:
