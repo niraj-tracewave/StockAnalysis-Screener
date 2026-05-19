@@ -13,6 +13,24 @@ class QuarterlyResultSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class ProfitLossResultSchema(BaseModel):
+    values: Any
+
+    class Config:
+        from_attributes = True
+
+class BalanceSheetResultSchema(BaseModel):
+    values: Any
+
+    class Config:
+        from_attributes = True
+
+class CashFlowResultSchema(BaseModel):
+    values: Any
+
+    class Config:
+        from_attributes = True
+
 class UpdateStockPriceSchema(BaseModel):
     price: float
     scrip: Optional[str] = None
