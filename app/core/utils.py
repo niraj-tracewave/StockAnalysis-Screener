@@ -2866,7 +2866,7 @@ async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
     return {}
 
 async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_name):
-    file_path  = get_custom_today_file(file_name)
+    file_path  = file_name
 
     if os.path.exists(file_path):
         try:
@@ -2885,7 +2885,7 @@ async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_nam
     return {}
 
 async def fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(file_name):
-    file_path  = get_custom_today_file(file_name)
+    file_path  = file_name
 
     if os.path.exists(file_path):
         try:
@@ -2904,7 +2904,7 @@ async def fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_lo
     return {}
 
 async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_name):
-    file = get_custom_today_file(file_name)
+    file = file_name
     data = {
         "processing": [],
         "data_not_available": [],
@@ -2954,7 +2954,7 @@ async def update_nse_bse_shareholder_save_processed_symbol(symbols, key, file_na
 
 
 async def update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(symbols, key, file_name):
-    file = get_custom_today_file(file_name)
+    file = file_name
     data = {
         "processing": [],
         "data_not_available": [],

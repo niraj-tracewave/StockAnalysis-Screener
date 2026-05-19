@@ -1114,7 +1114,7 @@ async def fetch_and_store_newly_listed_company_data_from_nse_bse_async():
     db = SessionLocalSync()
     error_symbols = []
     processed_symbols = []
-    file_name = "nse_bse_newly_listed_stocks.json"
+    file_name = "nse_bse_newly_listed_stocks"
     try:
         nse_newly_listed_stocks = await main_nse_newly_listed_stocks()
         nse_newly_listed_stocks_symbol = [item.get('symbol') for item in nse_newly_listed_stocks.get('data', [])]
