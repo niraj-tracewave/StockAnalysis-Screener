@@ -13,7 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from app.apis.models.company import Company
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, QuarterlyResultDateset, \
-    ResultFormatEnum, ShareHoldingPeriod, BalanceSheetDataset, ProfitLossDataset, CashFlowDataset
+    ResultFormatEnum, ShareHoldingPeriod, BalanceSheetDataset, ProfitLossDataset, CashFlowDataset, \
+    CustomFormatQuarterlyResultDateset
 from app.core.logging_config import setup_logging
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, \
     fetch_bse_data, fetch_bse_exact_symbol_data_from_json
@@ -34,7 +35,8 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow, \
     update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values, \
     fetch_integrated_filing_financials_data_from_nse_for_book_value, \
-    fetch_integrated_filing_financials_data_for_roce_from_nse, convert_existing_nse_to_screener
+    fetch_integrated_filing_financials_data_for_roce_from_nse, convert_existing_nse_to_screener, \
+    fetch_integrated_filing_financials_data_type_from_nse
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, parse_bse_promoter_table
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
@@ -2686,6 +2688,7 @@ async def convert_stock_quarterly_result_data_async():
     unsaved_symbols = []
     current_processed_symbols = []
     processed_symbols = []
+    file_name = 'convert_stock_quarterly_result'
     try:
         stmt = (
             select(CompanyStock)
@@ -2693,7 +2696,6 @@ async def convert_stock_quarterly_result_data_async():
                 QuarterlyResultDateset,
                 CompanyStock.id == QuarterlyResultDateset.company_id
             )
-            # .where(QuarterlyResultDateset.company_id.is_(None))
             .options(selectinload(CompanyStock.details))
             .execution_options(yield_per=100)
         )
@@ -2703,17 +2705,18 @@ async def convert_stock_quarterly_result_data_async():
 
         existing_symbols = set()
 
-        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_quarterly_result()
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(
+            file_name)
         existing_symbols.update(skipped_symbols_from_json)
         missing_symbols = [
             c for c in companies if c.nse_symbol not in existing_symbols
         ]
 
-        missing_symbols = missing_symbols[:100]
+        missing_symbols = missing_symbols[:50]
 
-        # current_processed_symbols = [c.nse_symbol for c in missing_symbols]
-        #
-        # await save_quarterly_result_processed_symbol(current_processed_symbols, "processing")
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(
+            current_processed_symbols, "processing", file_name)
 
         def chunk_list(data, size):
             for i in range(0, len(data), size):
@@ -2728,26 +2731,76 @@ async def convert_stock_quarterly_result_data_async():
                             select(QuarterlyResultDateset)
                             .where(QuarterlyResultDateset.company_id == company.id)
                         ).scalar_one_or_none()
-                        print(existing_dataset)
+
+                        if not existing_dataset:
+                            unsaved_symbols.append(company.nse_symbol)
+                            continue
 
                         nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
                         bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
                         if nse_company_list and bse_company_list:
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            format_type = None
+                            if integrated_filing_financials_list:
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    ixbrl = integrated_filing_obj.get("ixbrl")
+                                    if consolidated == "Consolidated":
+                                        format_type = await fetch_integrated_filing_financials_data_type_from_nse(
+                                            ixbrl)
+                                        if format_type:
+                                            break
                             old_values = existing_dataset.values
-                            # old_values = json.loads(old_values)
-                            print(old_values, type(old_values))
-                            converted = await convert_existing_nse_to_screener(old_values)
-                            print(converted, "ookkkk")
+                            converted = await convert_existing_nse_to_screener(old_values, format_type)
                             if not converted:
                                 converted = {
                                     "rows": [],
                                     "headers": [],
                                     "format_type": []
                                 }
+                            custom_quarterly_result = CustomFormatQuarterlyResultDateset(
+                                company_id=company.id,
+                                values=converted,
+                                result_format=ResultFormatEnum.consolidated
+                            )
+                            db.add(custom_quarterly_result)
+                            db.flush()
+                            company.stock_format = format_type
+                            processed_symbols.append(company.nse_symbol)
                         elif bse_company_list:
-                            pass
+                            unsaved_symbols.append(company.nse_symbol)
                         elif nse_company_list:
-                            pass
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            format_type = None
+                            if integrated_filing_financials_list:
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    ixbrl = integrated_filing_obj.get("ixbrl")
+                                    if consolidated == "Consolidated":
+                                        format_type = await fetch_integrated_filing_financials_data_type_from_nse(
+                                            ixbrl)
+                                        if format_type:
+                                            break
+                            old_values = existing_dataset.values
+                            converted = await convert_existing_nse_to_screener(old_values, format_type)
+                            if not converted:
+                                converted = {
+                                    "rows": [],
+                                    "headers": [],
+                                    "format_type": []
+                                }
+                            custom_quarterly_result = CustomFormatQuarterlyResultDateset(
+                                company_id=company.id,
+                                values=converted,
+                                result_format=ResultFormatEnum.consolidated
+                            )
+                            db.add(custom_quarterly_result)
+                            db.flush()
+                            company.stock_format = format_type
+                            db.commit()
+                            processed_symbols.append(company.nse_symbol)
                         else:
                             unsaved_symbols.append(company.nse_symbol)
 
@@ -2762,7 +2815,6 @@ async def convert_stock_quarterly_result_data_async():
         raise
     finally:
         db.close()
-        # await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
-        # await save_quarterly_result_processed_symbol(error_symbols, "error")
-        # await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
-        # await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)

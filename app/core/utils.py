@@ -1383,9 +1383,97 @@ async def fetch_th_tr_from_gi_table_for_roce(rows_data):
             final_data.append(f_json)
     return final_data
 
+# async def fetch_th_tr_from_li_table(rows_data):
+#     final_data = []
+#     previous_raw = None
+#     for row in rows_data:
+#         tds = row.find_all("td", recursive=False)
+#         ths = row.find_all("th", recursive=False)
+#         if not tds and not ths:
+#             continue
+#
+#         ths = row.find_all("th", recursive=False)
+#         tds = row.find_all("td")
+#         f_json: dict[str, str | None] = {
+#             "heading": None,
+#             "value": None,
+#         }
+#         titles = {"Gross NPAs" : "Shareholders Gross NPAs",
+#                   "Net NPAs": "Shareholders Net NPAs",
+#                   "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+#                   "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+#                   "Without unrealised gains":  "Shareholders Without unrealised gains",
+#                   "With unrealised gains": "Shareholders With unrealised gains"}
+#         if tds:
+#             if len(ths) == 2 and len(tds) == 2:
+#                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+#                 f_json['heading'] = section_name
+#
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name) or section_name
+#                 text = tds[0].get_text(strip=True) if len(tds) > 1 else None
+#                 value = await parse_numeric(text)
+#                 f_json['value'] = value
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#             elif len(ths) == 1 and len(tds) == 3:
+#                 section_name = await extract_text(tds[0]) if len(tds) > 1 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 text = tds[1].get_text(strip=True) if len(tds) > 1 else None
+#                 value = await parse_numeric(text)
+#                 f_json['value'] = value
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#             elif len(ths) == 2 and len(tds) == 1:
+#                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#         else:
+#             if len(ths) == 3:
+#                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#             elif len(ths) == 4:
+#                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 text = ths[2].get_text(strip=True) if len(ths) > 1 else None
+#                 value = await parse_numeric(text)
+#                 f_json['value'] = value
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#             elif len(ths) == 2:
+#                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#             elif len(ths) == 1:
+#                 section_name = await extract_text(ths[0]) if len(ths) > 0 else None
+#                 f_json['heading'] = section_name
+#                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+#                     f_json["heading"] = titles.get(section_name)
+#                 if section_name == "NPA ratios: (for shareholders' fund)":
+#                     previous_raw = section_name
+#
+#         final_data.append(f_json)
+#     return final_data
+
 async def fetch_th_tr_from_li_table(rows_data):
     final_data = []
     previous_raw = None
+    in_policyholders_section = False
+
     for row in rows_data:
         tds = row.find_all("td", recursive=False)
         ths = row.find_all("th", recursive=False)
@@ -1453,6 +1541,15 @@ async def fetch_th_tr_from_li_table(rows_data):
                     previous_raw = section_name
             elif len(ths) == 2:
                 section_name = await extract_text(ths[1]) if len(ths) > 1 else None
+                if not section_name:
+                    section_name = await extract_text(ths[0]) if len(ths) > 1 else None
+                f_json['heading'] = section_name
+                if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
+                    f_json["heading"] = titles.get(section_name)
+                if section_name == "NPA ratios: (for shareholders' fund)":
+                    previous_raw = section_name
+            elif len(ths) == 2:
+                section_name = await extract_text(ths[1]) if len(ths) > 1 else None
                 f_json['heading'] = section_name
                 if previous_raw and previous_raw == "NPA ratios: (for shareholders' fund)" and titles.get(section_name):
                     f_json["heading"] = titles.get(section_name)
@@ -1465,6 +1562,20 @@ async def fetch_th_tr_from_li_table(rows_data):
                     f_json["heading"] = titles.get(section_name)
                 if section_name == "NPA ratios: (for shareholders' fund)":
                     previous_raw = section_name
+
+        # --- Policyholders' section prefix logic ---
+        current_heading = f_json.get("heading")
+        # print(current_heading)
+
+        if current_heading == "Policyholders' Accounts":
+            in_policyholders_section = True
+
+        if in_policyholders_section:
+            if current_heading and current_heading != "Policyholders' Accounts":
+                f_json["heading"] = f"Policy {current_heading}"
+            # Stop prefixing after "Total Surplus (Deficit)" row is processed
+            if current_heading and "Total Surplus" in current_heading and "Deficit" in current_heading:
+                in_policyholders_section = False
 
         final_data.append(f_json)
     return final_data
@@ -1723,7 +1834,7 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
             elif "_LI_" in url:
                 total_rows = []
                 tables = soup.find_all("table")
-                for table1 in tables[3:5]:
+                for table1 in tables[1:5]:
                     table = table1
                     rows = [
                         tr for tr in table.find_all("tr")
@@ -6820,14 +6931,385 @@ def _merge_quarters_to_rows(all_rows: list, headers: list) -> dict:
 
     return {"rows": list(merged.values()), "headers": headers}
 
+#li
+def _extract_raw_from_rows_li(rows: list, n: int) -> dict:
+    """
+    Extract raw values from NSE Life Insurance format rows.
+    LIC, SBI Life, HDFC Life, ICICI Prudential Life etc.
+    Has two sections: Policyholders Account + Shareholders Account
+    """
+    def get(key):
+        return get_val_list(key, rows, n)
+
+    def get_or_zero(key):
+        vals = get_val_list(key, rows, n)
+        return [v if v is not None else 0 for v in vals]
+
+    return {
+        # ── Sales = Net Premium Income ─────────────────────────────────────
+        "sales":                    get("policy net premium income"),
+
+        # ── Gross Premium ─────────────────────────────────────────────────
+        "gross_premium":            get("policy gross premium income"),
+
+        # ── Investment Income ─────────────────────────────────────────────
+        "investment_income":        get("policy income from investments (net)"),
+
+        # ── Total Policyholders Expenses ───────────────────────────────────
+        "total_expenses":           get("policy total expenses"),
+
+        # ── Employee Cost ─────────────────────────────────────────────────
+        "employee_cost":            get("policy employees remuneration and welfare expenses"),
+
+        # ── Commission ────────────────────────────────────────────────────
+        "commission":               get("policy net commission"),
+
+        # ── Benefits Paid ─────────────────────────────────────────────────
+        "benefits_paid":            get("policy benefits paid (net)"),
+
+        # ── Change in Actuarial Liability ─────────────────────────────────
+        "actuarial_liability":      get("policy change in actuarial liability"),
+
+        # ── Other Income (Shareholders account) ───────────────────────────
+        "other_income":             get("other income"),
+
+        # ── Exceptional ───────────────────────────────────────────────────
+        "exceptional":              get_or_zero("extraordinary items (net of tax expenses)"),
+
+        # ── PBT (Shareholders account) ────────────────────────────────────
+        "pbt":                      get("profit/ (loss) before tax"),
+
+        # ── Tax (Shareholders account) ────────────────────────────────────
+        "total_tax":                get("provisions for tax"),
+        "current_tax":              get("current tax"),
+        "deferred_tax":             get("deffered tax"),
+
+        # ── Net Profit = Profit after tax and extraordinary items ──────────
+        "net_profit":               get("profit / (loss) after tax and before extraordinary items"),
+
+        # ── Associates (from Policyholders account other income) ───────────
+        "profit_associates":        get("policy share of profit of associates"),
+
+        # ── Minority Interest (from Policyholders account) ─────────────────
+        "minority":                 get("policy minority interest"),
+
+        # ── Profit owners ─────────────────────────────────────────────────
+        "profit_owners":            get("profit_or_loss,_attributable_to_owners_of_parent"),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        "eps":                      get("basic and diluted eps before extraordinary items (net of tax expense) for the period (not to be annualized)"),
+
+
+    }
+
+
+def _extract_raw_from_quarters_li(quarters: list, n: int) -> dict:
+    """Extract raw values from Format B quarters for LI."""
+    def get(field, fallback=None):
+        vals = [q.get(field) for q in quarters]
+        if fallback and all(v is None for v in vals):
+            vals = [q.get(fallback) for q in quarters]
+        return vals
+
+    def get_or_zero(field):
+        return [v or 0 for v in get(field)]
+
+    return {
+        "sales":                get("sales", "net_premium_income"),
+        "gross_premium":        get("gross_premium"),
+        "investment_income":    get("investment_income"),
+        "total_expenses":       get("total_expenses"),
+        "employee_cost":        get("employee_cost"),
+        "commission":           get("commission"),
+        "benefits_paid":        get("benefits_paid"),
+        "actuarial_liability":  get("actuarial_liability"),
+        "other_income":         get("other_income"),
+        "exceptional":          get_or_zero("exceptional_items"),
+        "pbt":                  get("profit_before_tax"),
+        "total_tax":            get("total_tax", "provision_for_tax"),
+        "current_tax":          get("current_tax"),
+        "deferred_tax":         get("deferred_tax"),
+        "net_profit":           get("net_profit"),
+        "profit_associates":    get("profit_from_associates"),
+        "minority":             get_or_zero("minority_share"),
+        "profit_owners":        get("profit_for_eps", "profit_owners"),
+        "eps":                  get("eps", "eps_basic"),
+    }
+
+
+def _apply_screener_formulas_li(raw: dict, n: int, headers: list) -> dict:
+    """
+    LI Screener formulas:
+      Sales            = Net Premium Income
+      Expenses         = Total Expenses (Policyholders account)
+      Employee Cost %  = Employee Cost / Sales * 100
+      Operating Profit = Sales - Expenses
+      OPM %            = Operating Profit / Sales * 100
+      Other Income     = Shareholders account other income
+      Interest         = 0
+      Depreciation     = 0
+      Tax %            = Provision for Tax / PBT * 100
+      Minority         = shown as negative
+      Profit for PE    = Net Profit - Minority
+      Profit for EPS   = Profit attributable to owners
+      YOY Sales %      = date-matched
+      YOY Profit %     = date-matched
+    """
+
+    def sub(a, b):
+        return [
+            (av - bv) if (av is not None and bv is not None) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def pct(a, b):
+        return [
+            round(av / bv * 100) if (av is not None and bv is not None and bv != 0) else None
+            for av, bv in zip(a, b)
+        ]
+
+    def safe_neg(vals):
+        return [(-v if v is not None and v != 0 else v) for v in vals]
+
+    sales_v            = raw["sales"]
+    total_exp_v        = raw["total_expenses"]
+    emp_v              = raw["employee_cost"]
+    other_inc_v        = raw["other_income"]
+    exceptional_v      = raw["exceptional"]
+    pbt_v              = raw["pbt"]
+    tax_v              = raw["total_tax"]
+    net_profit_v       = raw["net_profit"]
+    minority_v         = raw["minority"]
+    profit_assoc_v     = raw.get("profit_associates", [None] * n)
+    owners_v           = raw["profit_owners"]
+
+    # Operating Profit = Sales - Expenses
+    op_profit_v        = sub(sales_v, total_exp_v)
+
+    # OPM % = Operating Profit / Sales * 100
+    opm_pct_v          = pct(op_profit_v, sales_v)
+
+    # Employee Cost % = Employee / Sales * 100
+    emp_pct_v          = pct(emp_v, sales_v)
+
+    # Other Income Normal = Other Income - Exceptional
+    other_inc_normal_v = sub(other_inc_v, exceptional_v)
+
+    # Tax % = Total Tax / PBT * 100
+    tax_pct_v          = pct(tax_v, pbt_v)
+
+    # Minority shown as negative
+    minority_neg_v     = safe_neg(minority_v)
+
+    # Exceptional AT
+    exceptional_at_v   = exceptional_v
+
+    # Profit excl Exceptional = Net Profit - Exceptional AT
+    profit_excl_v      = sub(net_profit_v, exceptional_at_v)
+
+    # Profit for PE = Net Profit - Minority
+    profit_pe_v        = sub(net_profit_v, minority_v)
+
+    # Profit for EPS = Profit attributable to owners
+    profit_eps_v       = owners_v
+
+    # YOY
+    yoy_sales_v        = yoy_growth(sales_v, headers)
+    yoy_profit_v       = yoy_growth(net_profit_v, headers)
+
+    return {
+        **raw,
+        "op_profit":         op_profit_v,
+        "opm_pct":           opm_pct_v,
+        "emp_pct":           emp_pct_v,
+        "other_inc_normal":  other_inc_normal_v,
+        "tax_pct":           tax_pct_v,
+        "minority_neg":      minority_neg_v,
+        "exceptional_at":    exceptional_at_v,
+        "profit_excl":       profit_excl_v,
+        "profit_pe":         profit_pe_v,
+        "profit_eps":        profit_eps_v,
+        "profit_associates": profit_assoc_v,
+        "yoy_sales":         yoy_sales_v,
+        "yoy_profit":        yoy_profit_v,
+    }
+
+
+def _build_screener_rows_li(derived: dict, n: int) -> list:
+    """Build Screener rows for LI — matches LIC/HDFC Life screener layout."""
+
+    def row(key, label, values, bold=False, children=None):
+        r = {"key": key, "label": label,
+             "type": "group" if children else "single",
+             "unit": "Rs Cr", "values": values}
+        if children:
+            r["children"] = children
+        if bold:
+            r["bold"] = True
+        return r
+
+    return [
+        # ── Sales ─────────────────────────────────────────────────────────
+        row("sales", "Sales", derived["sales"], bold=True, children=[
+            row("yoy_sales_growth_pct", "YOY Sales Growth %", derived["yoy_sales"]),
+        ]),
+
+        # ── Expenses ──────────────────────────────────────────────────────
+        row("expenses", "Expenses", derived["total_expenses"], bold=True, children=[
+            row("employee_cost_pct",  "Employee Cost %",  derived["emp_pct"]),
+        ]),
+
+        # ── Operating Profit ──────────────────────────────────────────────
+        row("operating_profit", "Operating Profit", derived["op_profit"], bold=True),
+        row("opm_pct",          "OPM %",            derived["opm_pct"]),
+
+        # ── Other Income ──────────────────────────────────────────────────
+        row("other_income", "Other Income", derived["other_income"], bold=True, children=[
+            row("other_income_normal", "Other Income Normal", derived["other_inc_normal"]),
+        ]),
+
+        # ── Interest & Depreciation (0 for insurance) ─────────────────────
+        row("interest",     "Interest",     [0] * n),
+        row("depreciation", "Depreciation", [0] * n),
+
+        # ── Profit Before Tax ─────────────────────────────────────────────
+        row("profit_before_tax", "Profit Before Tax", derived["pbt"],      bold=True),
+        row("tax_pct",           "Tax %",             derived["tax_pct"]),
+
+        # ── Net Profit ────────────────────────────────────────────────────
+        row("net_profit", "Net Profit", derived["net_profit"], bold=True, children=[
+            row("profit_from_associates", "Profit from Associates", derived["profit_associates"]),
+            row("minority_share",          "Minority Share",        derived["minority_neg"]),
+            row("exceptional_items_at",    "Exceptional Items AT",  derived["exceptional_at"]),
+            row("profit_excl_exceptional", "Profit excl Excep",     derived["profit_excl"]),
+            row("profit_for_pe",           "Profit for PE",         derived["profit_pe"]),
+            row("profit_for_eps",          "Profit for EPS",        derived["profit_eps"]),
+            row("yoy_profit_growth_pct", "YOY Profit Growth %", derived["yoy_profit"]),
+        ]),
+
+        # ── EPS ───────────────────────────────────────────────────────────
+        row("eps", "EPS in Rs", derived["eps"], children=[
+        ]),
+
+    ]
+
+
 # ── Main converters ───────────────────────────────────────────────────────────
 
-async def convert_existing_nse_to_screener(response_list: list) -> dict:
-    # return convert_to_screener_format(response_list)
-    # return convert_to_screener_format_banking(response_list)
-    # return convert_to_screener_format_nbfc(response_list)
-    return convert_to_screener_format_gi(response_list)
+def convert_to_screener_format_li(old_values) -> dict:
+    if isinstance(old_values, str):
+        try:
+            old_values = json.loads(old_values)
+        except Exception as e:
+            print(f"  JSON parse error: {e}")
+            return None
+
+    if isinstance(old_values, list):
+        return _convert_list_format_li(old_values)
+
+    if isinstance(old_values, dict):
+        return _convert_dict_format_li(old_values)
+
+    return None
+
+
+def _convert_list_format_li(old_values: list) -> dict:
+    if not old_values:
+        return None
+
+    first = old_values[0]
+
+    # Format A: list of lists
+    if isinstance(first, list):
+        headers, all_rows = [], []
+        for quarter_data in old_values:
+            meta = next((r for r in quarter_data
+                         if isinstance(r, dict) and "date" in r), {})
+            rows = [r for r in quarter_data
+                    if not (isinstance(r, dict) and "date" in r)]
+            headers.append(meta.get("date", ""))
+            all_rows.append(rows)
+        merged = _merge_quarters_to_rows(all_rows, headers)
+        return _convert_dict_format_li(merged)
+
+    # Format B: list of per-quarter dicts
+    if isinstance(first, dict) and "date" in first:
+        headers = [q.get("date", "") for q in old_values]
+        n       = len(headers)
+        raw     = _extract_raw_from_quarters_li(old_values, n)
+        derived = _apply_screener_formulas_li(raw, n, headers)
+        return {
+            "headers":     headers,
+            "rows":        _build_screener_rows_li(derived, n),
+            "format_type": "LI",
+        }
+
+    # Format C: flat NSE rows
+    if isinstance(first, dict) and "key" in first:
+        headers = None
+        for r in old_values:
+            if isinstance(r, dict) and "headers" in r:
+                headers = r.get("headers")
+                break
+        if not headers:
+            sample  = next((r.get("values") for r in old_values if r.get("values")), [])
+            n       = len(sample)
+            headers = [f"Q{i+1}" for i in range(n)]
+            print(f"  WARNING: No headers found, using {headers}")
+        return _convert_dict_format_li({"rows": old_values, "headers": headers})
+
+    return None
+
+
+def _convert_dict_format_li(old_values: dict) -> dict:
+    rows    = old_values.get("rows", [])
+    headers = old_values.get("headers", [])
+    n       = len(headers)
+
+    if n == 0 or not rows:
+        return None
+
+    raw     = _extract_raw_from_rows_li(rows, n)
+    derived = _apply_screener_formulas_li(raw, n, headers)
+
+    return {
+        "headers":     headers,
+        "rows":        _build_screener_rows_li(derived, n),
+        "format_type": "LI",
+    }
+
+# ── Main converters ───────────────────────────────────────────────────────────
+
+async def convert_existing_nse_to_screener(response_list: list, stock_type) -> dict:
+    stock_type = stock_type.lower()
+    if stock_type == "indas":
+        return convert_to_screener_format(response_list)
+    elif stock_type == "li":
+        return convert_to_screener_format_li(response_list)
+    elif stock_type == "gi":
+        return convert_to_screener_format_gi(response_list)
+    elif stock_type == "nbfc":
+        return convert_to_screener_format_nbfc(response_list)
+    elif stock_type == "banking":
+        return convert_to_screener_format_banking(response_list)
+    else:
+        return None
 
 
 # async def bse_decide_quarterly_format(response_list: list) -> dict:
 #     return convert_to_screener_format(response_list)
+
+
+async def fetch_integrated_filing_financials_data_type_from_nse(url):
+    if "_GI_" in url:
+        return "GI"
+    elif "_LI_" in url:
+        return "LI"
+    elif "_NBFC_INDAS_" in url:
+        return "NBFC"
+    elif "_INDAS_" in url:
+        return "INDAS"
+    elif "_BANKING_" in url:
+        return "BANKING"
+    else:
+        return None

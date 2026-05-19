@@ -82,5 +82,9 @@ celery_app.conf.beat_schedule = {
     "fetch_calculate_and_update_stock_roce": {
         "task": "fetch_calculate_and_update_stock_roce_data",
         "schedule": crontab(minute="*/22"),
+    },
+    "convert_stock_quarterly_result": {
+        "task": "convert_stock_quarterly_result_data",
+        "schedule": crontab(minute="*/30"),
     }
 }
