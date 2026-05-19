@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -17,15 +18,25 @@ down_revision: Union[str, Sequence[str], None] = '83805cca507a'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-result_format_enum = sa.Enum(
+result_format_enum = postgresql.ENUM(
     "standalone",
     "consolidated",
-    name="result_format_enum"
+    name="result_format_enum",
+    create_type=False,
 )
 
 def upgrade() -> None:
     """Upgrade schema."""
-    result_format_enum.create(op.get_bind(), checkfirst=True)
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            CREATE TYPE result_format_enum AS ENUM ('standalone', 'consolidated');
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;
+        END $$;
+        """
+    )
 
     # add column
     op.add_column(

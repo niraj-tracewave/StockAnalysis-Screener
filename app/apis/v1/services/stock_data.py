@@ -13,7 +13,8 @@ from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
     QuarterlyResultDateset
-from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema
+from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema, \
+    ProfitLossResultSchema, BalanceSheetResultSchema, CashFlowResultSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
     YEAR_OR_MONTY_TO_DAYS_MAP
 from app.core.custom_error_response import CustomValidationError
@@ -504,6 +505,8 @@ class CompanyStockFetchService:
                 .options(selectinload(CompanyStock.details))
                 .options(selectinload(CompanyStock.charts))
                 .options(selectinload(CompanyStock.quarterly_result))
+                .options(selectinload(CompanyStock.profit_loss))
+                .options(selectinload(CompanyStock.balance_sheet))
                 .where(
                     or_(
                         CompanyStock.nse_symbol == symbol,
@@ -731,6 +734,49 @@ class CompanyStockFetchService:
                 quarterly_result_r = QuarterlyResultSchema.model_validate(item).model_dump()
                 if quarterly_result_r:
                     quarterly_result_r = quarterly_result_r.get("values")
+
+            profit_loss_consolidated = None
+            profit_loss_standalone = None
+
+            for item in company.profit_loss:
+                validated = ProfitLossResultSchema.model_validate(item).model_dump()
+                validated = validated.get("values", {})
+
+                if validated.get("type") == "Consolidated":
+                    profit_loss_consolidated = validated
+
+                elif validated.get("type") == "Standalone":
+                    profit_loss_standalone = validated
+            profit_loss_result_r = profit_loss_consolidated if profit_loss_consolidated else profit_loss_standalone
+
+            balance_sheet_consolidated = None
+            balance_sheet_standalone = None
+
+            for item in company.balance_sheet:
+                validated = BalanceSheetResultSchema.model_validate(item).model_dump()
+                validated = validated.get("values", {})
+
+                if validated.get("type") == "Consolidated":
+                    balance_sheet_consolidated = validated
+
+                elif validated.get("type") == "Standalone":
+                    balance_sheet_standalone = validated
+            balance_sheet_result_r = balance_sheet_consolidated if balance_sheet_consolidated else balance_sheet_standalone
+
+            cash_flow_consolidated = None
+            cash_flow_standalone = None
+
+            for item in company.balance_sheet:
+                validated = CashFlowResultSchema.model_validate(item).model_dump()
+                validated = validated.get("values", {})
+
+                if validated.get("type") == "Consolidated":
+                    cash_flow_consolidated = validated
+
+                elif validated.get("type") == "Standalone":
+                    cash_flow_standalone = validated
+            cash_flow_result_r = cash_flow_consolidated if cash_flow_consolidated else cash_flow_standalone
+
             response = {
                 "id": company.id,
                 "name": company.name,
@@ -762,9 +808,9 @@ class CompanyStockFetchService:
 
                 "chart": one_month_charts,
                 "quarterly_result": quarterly_result_r or quarterly_result,
-                "profit_loss": profit_loss,
-                "balance_sheet": balance_sheet,
-                "cash_flow": cash_flow,
+                "profit_loss": profit_loss_result_r or profit_loss,
+                "balance_sheet": balance_sheet_result_r or balance_sheet,
+                "cash_flow": cash_flow_result_r or cash_flow,
                 "ratios": ratios,
                 "share_holding_pattern": share_holding_pattern,
                 "use_own_stock_socket": True,

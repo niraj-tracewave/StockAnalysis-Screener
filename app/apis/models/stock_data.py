@@ -1,10 +1,10 @@
 import enum
 
-from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric, Enum
+from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric
 from sqlalchemy.orm import relationship
 
 from app.db.postgres.base import Base
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ENUM as PgEnum
 
 
 
@@ -69,6 +69,8 @@ class CompanyStock(Base):
         nullable=True,
     )
 
+    stock_format = Column(String, nullable=True)
+
     basic_industry = Column(
         String,
         index=True,
@@ -126,6 +128,12 @@ class CompanyStock(Base):
 
     share_holding_pattern = relationship(
         "ShareHoldingPeriod",
+        back_populates="company",
+        cascade="all, delete-orphan"
+    )
+
+    custom_format_quarterly_result = relationship(
+        "CustomFormatQuarterlyResultDateset",
         back_populates="company",
         cascade="all, delete-orphan"
     )
@@ -221,7 +229,14 @@ class QuarterlyResultDateset(Base):
 
     values = Column(JSONB, nullable=False)
 
-    result_format =  Column(Enum(ResultFormatEnum), nullable=True)
+    result_format = Column(
+        PgEnum(
+            ResultFormatEnum,
+            name="result_format_enum",
+            create_type=False
+        ),
+        nullable=True
+    )
 
     company = relationship(
         "CompanyStock",
@@ -393,3 +408,30 @@ class ShareHoldingSectionChild(Base):
     value = Column(Numeric(10, 2), nullable=False)
 
     section = relationship("ShareHoldingSection", back_populates="children")
+
+class CustomFormatQuarterlyResultDateset(Base):
+    __tablename__ = "custom_format_quarterly_result_dateset"
+    id = Column(Integer, primary_key=True, index=True)
+
+    company_id = Column(
+        Integer,
+        ForeignKey("company_stock.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    values = Column(JSONB, nullable=False)
+
+    result_format = Column(
+        PgEnum(
+            ResultFormatEnum,
+            name="result_format_enum",
+            create_type=False
+        ),
+        nullable=True
+    )
+
+    company = relationship(
+        "CompanyStock",
+        back_populates="custom_format_quarterly_result"
+    )
