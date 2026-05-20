@@ -737,7 +737,7 @@ class CompanyStockFetchService:
                         "meta": {**chart.meta, "days": "1M"}
                     })
             quarterly_result_r = {}
-            for item in company.custom_format_quarterly_result:
+            for item in company.quarterly_result:
                 quarterly_result_r = QuarterlyResultSchema.model_validate(item).model_dump()
                 if quarterly_result_r:
                     quarterly_result_r = quarterly_result_r.get("values")
@@ -784,7 +784,7 @@ class CompanyStockFetchService:
                     cash_flow_standalone = validated
             cash_flow_result_r = cash_flow_consolidated if cash_flow_consolidated else cash_flow_standalone
 
-            share_holding_pattern_result_r = transform_share_holding_pattern(company.share_holding_pattern)
+            # share_holding_pattern_result_r = transform_share_holding_pattern(company.share_holding_pattern)
 
             response = {
                 "id": company.id,
@@ -821,7 +821,7 @@ class CompanyStockFetchService:
                 "balance_sheet": balance_sheet_result_r or balance_sheet,
                 "cash_flow": cash_flow_result_r or cash_flow,
                 "ratios": ratios,
-                "share_holding_pattern": share_holding_pattern_result_r,
+                "share_holding_pattern": share_holding_pattern,
                 "use_own_stock_socket": True,
                 "is_following": is_following,
             }
