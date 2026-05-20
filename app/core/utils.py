@@ -7313,3 +7313,63 @@ async def fetch_integrated_filing_financials_data_type_from_nse(url):
         return "BANKING"
     else:
         return None
+
+def transform_share_holding_pattern(periods: list[ShareHoldingPeriod]) -> dict | None:
+    if not periods:
+        return {}
+    periods = sorted(periods, key=lambda p: p.period_date)
+    period_ids = [p.id for p in periods]
+    headers = [p.period_date.strftime("%b %Y") for p in periods]
+    period_type = periods[0].period_type
+    sections: dict[str, dict] = {}
+    for period in periods:
+        for sec in period.sections:
+            if sec.key not in sections:
+                sections[sec.key] = {
+                    "key": sec.key,
+                    "label": sec.label,
+                    "value_type": sec.value_type,
+                    "values_by_period": {},
+                    "children": {},
+                }
+            s = sections[sec.key]
+            s["values_by_period"][period.id] = float(sec.total_value)
+            for child in sec.children:
+                if child.label not in s["children"]:
+                    s["children"][child.label] = {
+                        "label": child.label,
+                        "values_by_period": {},
+                    }
+                s["children"][child.label]["values_by_period"][period.id] = float(child.value)
+    def make_key(label: str) -> str:
+        return label.lower().replace(" ", "_").replace("&", "and").replace(".", "")
+
+    def map_unit(value_type: str) -> str:
+        return "percentage" if value_type == "percent" else value_type
+
+    output_rows = []
+    for sec in sections.values():
+        values = [sec["values_by_period"].get(pid) for pid in period_ids]
+        row = {
+            "key": sec["key"],
+            "label": sec["label"],
+            "type": "group" if sec["children"] else "single",
+            "unit": map_unit(sec["value_type"]),
+            "values": values,
+            "children": [
+                {
+                    "key": make_key(child["label"]),
+                    "label": child["label"],
+                    "type": "single",
+                    "unit": map_unit(sec["value_type"]),
+                    "values": [child["values_by_period"].get(pid) for pid in period_ids],
+                }
+                for child in sec["children"].values()
+            ],
+        }
+        output_rows.append(row)
+    return {
+        "period_type": period_type,
+        "headers": headers,
+        "rows": output_rows,
+    }
