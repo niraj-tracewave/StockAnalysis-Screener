@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
-    QuarterlyResultDateset
+    QuarterlyResultDateset, ShareHoldingSection
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema, \
     ProfitLossResultSchema, BalanceSheetResultSchema, CashFlowResultSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
@@ -21,7 +21,8 @@ from app.core.custom_error_response import CustomValidationError
 from app.core.custom_response import CustomJSONResponse
 from app.core.nse_search import fetch_bse_exact_symbol_data, fetch_nse_exact_symbol_data
 from app.core.utils import parse_qtr, parse_period_to_date, fetch_top_50_company_from_nse, \
-    fetch_json_from_angle_one, fetch_integrated_filing_financials_data_from_nse, convert_to_quarterly_format
+    fetch_json_from_angle_one, fetch_integrated_filing_financials_data_from_nse, convert_to_quarterly_format, \
+    transform_share_holding_pattern
 from app.db.postgres.base import BaseDBOperations
 from app.tasks.tasks import fetch_and_store_company_data_from_top_50
 from scripts.bse_fetch_share_holder_link_of_stock import main_fetch_stock_share_holder_pattern_urls
@@ -507,6 +508,11 @@ class CompanyStockFetchService:
                 .options(selectinload(CompanyStock.quarterly_result))
                 .options(selectinload(CompanyStock.profit_loss))
                 .options(selectinload(CompanyStock.balance_sheet))
+                .options(
+                    selectinload(CompanyStock.share_holding_pattern)
+                    .selectinload(ShareHoldingPeriod.sections)
+                    .selectinload(ShareHoldingSection.children)
+                )
                 .where(
                     or_(
                         CompanyStock.nse_symbol == symbol,
@@ -777,6 +783,8 @@ class CompanyStockFetchService:
                     cash_flow_standalone = validated
             cash_flow_result_r = cash_flow_consolidated if cash_flow_consolidated else cash_flow_standalone
 
+            share_holding_pattern_result_r = transform_share_holding_pattern(company.share_holding_pattern)
+
             response = {
                 "id": company.id,
                 "name": company.name,
@@ -812,7 +820,7 @@ class CompanyStockFetchService:
                 "balance_sheet": balance_sheet_result_r or balance_sheet,
                 "cash_flow": cash_flow_result_r or cash_flow,
                 "ratios": ratios,
-                "share_holding_pattern": share_holding_pattern,
+                "share_holding_pattern": share_holding_pattern_result_r,
                 "use_own_stock_socket": True,
                 "is_following": is_following,
             }
