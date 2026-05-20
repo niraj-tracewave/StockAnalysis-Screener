@@ -506,6 +506,7 @@ class CompanyStockFetchService:
                 .options(selectinload(CompanyStock.details))
                 .options(selectinload(CompanyStock.charts))
                 .options(selectinload(CompanyStock.quarterly_result))
+                .options(selectinload(CompanyStock.custom_format_quarterly_result))
                 .options(selectinload(CompanyStock.profit_loss))
                 .options(selectinload(CompanyStock.balance_sheet))
                 .options(
@@ -736,7 +737,7 @@ class CompanyStockFetchService:
                         "meta": {**chart.meta, "days": "1M"}
                     })
             quarterly_result_r = {}
-            for item in company.quarterly_result:
+            for item in company.custom_format_quarterly_result:
                 quarterly_result_r = QuarterlyResultSchema.model_validate(item).model_dump()
                 if quarterly_result_r:
                     quarterly_result_r = quarterly_result_r.get("values")
