@@ -1666,9 +1666,56 @@ async def fetch_th_tr_from_li_table_for_roce(rows_data):
         final_data.append(f_json)
     return final_data
 
+# async def bse_fetch_th_tr_from_li_table(rows_data):
+#     final_data = []
+#     previous_raw = None
+#     for row in rows_data:
+#         tds = row.find_all("td", recursive=False)
+#         ths = row.find_all("th", recursive=False)
+#         if not tds and not ths:
+#             continue
+#
+#         tds = row.find_all("td")
+#         f_json = {
+#             "heading": None,
+#             "value": None,
+#         }
+#         titles = {"Gross NPAs": "Shareholders Gross NPAs",
+#                   "Net NPAs": "Shareholders Net NPAs",
+#                   "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+#                   "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+#                   "Without unrealised gains": "Shareholders Without unrealised gains",
+#                   "With unrealised gains": "Shareholders With unrealised gains"}
+#         if tds:
+#             section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+#             f_json['heading'] = section_name
+#             if section_name == "NPA ratios: (for shareholder's fund)":
+#                 previous_raw = section_name
+#             if tds:
+#                 value = None
+#                 if len(tds) == 4:
+#                     section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+#                     if previous_raw and previous_raw == "NPA ratios: (for shareholder's fund)" and titles.get(
+#                             section_name):
+#                         f_json["heading"] = titles.get(section_name) or section_name
+#                     value_tag = tds[2].find("ix:nonfraction")
+#                     print(value_tag, "fraction", section_name)
+#                     if value_tag:
+#                         text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+#                         sign = value_tag.get("sign")
+#                         if sign == "-":
+#                             text = "-" + text
+#                         value = await parse_numeric(text)
+#                     f_json['value'] = value
+#             final_data.append(f_json)
+#     return final_data
+
+
 async def bse_fetch_th_tr_from_li_table(rows_data):
     final_data = []
     previous_raw = None
+    policy_prefix_active = False
+
     for row in rows_data:
         tds = row.find_all("td", recursive=False)
         ths = row.find_all("th", recursive=False)
@@ -1680,17 +1727,26 @@ async def bse_fetch_th_tr_from_li_table(rows_data):
             "heading": None,
             "value": None,
         }
-        titles = {"Gross NPAs": "Shareholders Gross NPAs",
-                  "Net NPAs": "Shareholders Net NPAs",
-                  "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
-                  "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
-                  "Without unrealised gains": "Shareholders Without unrealised gains",
-                  "With unrealised gains": "Shareholders With unrealised gains"}
+        titles = {
+            "Gross NPAs": "Shareholders Gross NPAs",
+            "Net NPAs": "Shareholders Net NPAs",
+            "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+            "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+            "Without unrealised gains": "Shareholders Without unrealised gains",
+            "With unrealised gains": "Shareholders With unrealised gains"
+        }
         if tds:
-            section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+            if len(tds) == 2:
+                section_name = tds[0].get_text(strip=True) if len(tds) > 1 else None
+            else:
+                section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
             f_json['heading'] = section_name
+            if section_name == "Policyholder's Accounts":
+                policy_prefix_active = True
+
             if section_name == "NPA ratios: (for shareholder's fund)":
                 previous_raw = section_name
+
             if tds:
                 value = None
                 if len(tds) == 4:
@@ -1706,6 +1762,14 @@ async def bse_fetch_th_tr_from_li_table(rows_data):
                             text = "-" + text
                         value = await parse_numeric(text)
                     f_json['value'] = value
+
+            # Apply/stop "Policy" prefix AFTER heading is fully resolved
+            if f_json['heading'] == "Total Surplus(Deficit)" or f_json['heading'] == "Total Surplus (Deficit)":
+                f_json['heading'] = "Policy Total Surplus (Deficit)"
+                policy_prefix_active = False
+            elif policy_prefix_active and f_json['heading']:
+                f_json['heading'] = f"Policy {f_json['heading']}"
+
             final_data.append(f_json)
     return final_data
 
@@ -1848,6 +1912,28 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     final_data
                 )
                 return structured_with_values, value, "LI"
+            elif "_NBFC_INDAS_" in url:
+                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
+                table = None
+                if tables and len(tables) > 1:
+                    for table1 in tables[:1]:
+                        table = table1
+                else:
+                    tables = soup.find_all("table")
+                    for table1 in tables[1:2]:
+                        table = table1
+                rows = [
+                    tr for tr in table.find_all("tr")
+                    if tr.get_text(strip=True)
+                ]
+
+                final_data = await fetch_th_tr_from_table(rows)
+                structured = await safe_build(final_data, url)
+                structured_with_values = await inject_values_into_hierarchy(
+                    structured,
+                    final_data
+                )
+                return structured_with_values, value, "NBFC"
             elif "_INDAS_" in url:
                 tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
                 table = None
@@ -1892,54 +1978,8 @@ async def fetch_integrated_filing_financials_data_from_nse(url):
                     final_data
                 )
                 return structured_with_values, value, "BANKING"
-            elif "_NBFC_" in url:
-                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
-                table = None
-                if tables and len(tables) > 1:
-                    for table1 in tables[:1]:
-                        table = table1
-                else:
-                    tables = soup.find_all("table")
-                    for table1 in tables[1:2]:
-                        table = table1
-                rows = [
-                    tr for tr in table.find_all("tr")
-                    if tr.get_text(strip=True)
-                ]
-
-                final_data = await fetch_th_tr_from_table(rows)
-                structured = await safe_build(final_data, url)
-                structured_with_values = await inject_values_into_hierarchy(
-                    structured,
-                    final_data
-                )
-                return structured_with_values, value, "NBFC"
             else:
-                tables = soup.find_all("table", class_="stockExchnageTableLastColwidth")
-                other_tables = soup.find_all("table", class_="customTablewidth3Col")
-                table = None
-                if tables and len(tables) > 1:
-                    for table1 in tables[:1]:
-                        table = table1
-                elif other_tables:
-                    for table1 in other_tables[:1]:
-                        table = table1
-                else:
-                    tables = soup.find_all("table")
-                    for table1 in tables[1:2]:
-                        table = table1
-                rows = [
-                    tr for tr in table.find_all("tr")
-                    if tr.get_text(strip=True)
-                ]
-
-                final_data = await fetch_th_tr_from_table(rows)
-                structured = await safe_build(final_data, url)
-                structured_with_values = await inject_values_into_hierarchy(
-                    structured,
-                    final_data
-                )
-                return structured_with_values, value, "Other"
+                return [], value, "Other"
 
         return structured_with_values, None, None
     except Exception as e:
@@ -2562,7 +2602,7 @@ async def fetch_bse_integrated_filing_financials_data_from(url):
                     start_index = None
                     for i, tr in enumerate(rows):
                         text = tr.get_text(" ", strip=True).lower()
-                        if "shareholder's account" in text:
+                        if "Income" in text:
                             start_index = i
                             break
 

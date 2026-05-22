@@ -2729,7 +2729,10 @@ async def convert_stock_quarterly_result_data_async():
                     with db.begin_nested():
                         existing_dataset = db.execute(
                             select(QuarterlyResultDateset)
-                            .where(QuarterlyResultDateset.company_id == company.id)
+                            .where(
+                                QuarterlyResultDateset.company_id == company.id,
+                                QuarterlyResultDateset.result_format == "consolidated"
+                            )
                         ).scalar_one_or_none()
 
                         if not existing_dataset:
@@ -2818,3 +2821,174 @@ async def convert_stock_quarterly_result_data_async():
         await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
         await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
         await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
+
+async def fetch_stock_quarterly_result_standalone_data_async():
+    db = SessionLocalSync()
+    error_symbols = []
+    unsaved_symbols = []
+    current_processed_symbols = []
+    processed_symbols = []
+    file_name = 'stock_standalone_quarterly_result.json'
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                QuarterlyResultDateset,
+                CompanyStock.id == QuarterlyResultDateset.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+            .execution_options(yield_per=100)
+        )
+
+        result = db.execute(stmt)
+        companies = result.scalars().all()
+
+        existing_symbols = set()
+        skipped_symbols_from_json = await fetch_symbols_from_covered_symbol_json_for_balance_sheet_and_profit_loss_and_cash_flow(
+            file_name)
+        existing_symbols.update(skipped_symbols_from_json)
+        missing_symbols = [
+            c for c in companies if c.nse_symbol not in existing_symbols
+        ]
+        missing_symbols = missing_symbols[:30]
+
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol(
+            current_processed_symbols, "processing", file_name)
+
+        def chunk_list(data, size):
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+
+        for chunk in chunk_list(missing_symbols, 30):
+            for company in chunk:
+                try:
+                    print(f"\nProcessing company: {company.id} | {company.name}")
+                    with db.begin_nested():
+                        db.execute(
+                            delete(QuarterlyResultDateset)
+                            .where(QuarterlyResultDateset.company_id == company.id)
+                        )
+                        nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                        bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                        if nse_company_list and bse_company_list:
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(
+                                company.nse_symbol, "equity")
+                            quarterly_result = []
+                            if integrated_filing_financials_list:
+                                response_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    qe_date = integrated_filing_obj.get("qe_Date")
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    ixbrl = integrated_filing_obj.get("ixbrl")
+                                    formatted = None
+                                    if qe_date:
+                                        formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
+                                    if consolidated == "Standalone":
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                                        output.append({
+                                            "date": formatted or qe_date,
+                                            "consolidated": consolidated,
+                                            "amount_type": amount_type,
+                                            "format": format_type,
+                                        })
+                                        response_list.append(output)
+                                if response_list:
+                                    quarterly_result = await decide_quarterly_format(response_list)
+                            if quarterly_result:
+                                company_stock = QuarterlyResultDateset(
+                                    company_id=company.id,
+                                    values=quarterly_result,
+                                    result_format=ResultFormatEnum.standalone
+                                )
+                                db.add(company_stock)
+                                db.flush()
+                                processed_symbols.append(company.nse_symbol)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                        elif bse_company_list:
+                            integrated_filing_financials_list = await main_bse_fetch_integrated_filing_financials(
+                                company.bse_code)
+                            quarterly_result = []
+                            if integrated_filing_financials_list:
+                                response_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
+                                    financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
+                                    qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                    consolidated = financial_name_obj.get("type")
+                                    ixbrl = integrated_filing_obj.get("xbrlurl")
+                                    if consolidated == "standalone" and financial_name_obj.get("period") == "qtr":
+                                        url = f"https://www.bseindia.com{ixbrl}"
+                                        output, amount_type, format_type = await fetch_bse_integrated_filing_financials_data_from(url)
+                                        output.append({
+                                            "date": qe_date,
+                                            "consolidated": consolidated,
+                                            "amount_type": amount_type,
+                                            "format": format_type
+                                        })
+                                        response_list.append(output)
+                                if response_list:
+                                    quarterly_result = await bse_decide_quarterly_format(response_list)
+                            if quarterly_result:
+                                company_stock = QuarterlyResultDateset(
+                                    company_id=company.id,
+                                    values=quarterly_result,
+                                    result_format=ResultFormatEnum.standalone
+                                )
+                                db.add(company_stock)
+                                db.flush()
+                                processed_symbols.append(company.nse_symbol)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                        elif nse_company_list:
+                            integrated_filing_financials_list = await main_fetch_integrated_filing_financials(company.nse_symbol, "equity")
+                            quarterly_result = []
+                            if integrated_filing_financials_list:
+                                response_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("data"):
+                                    qe_date = integrated_filing_obj.get("qe_Date")
+                                    consolidated = integrated_filing_obj.get("consolidated")
+                                    ixbrl = integrated_filing_obj.get("ixbrl")
+                                    formatted = None
+                                    if qe_date:
+                                        formatted = datetime.strptime(qe_date, "%d-%b-%Y").strftime("%b-%Y")
+                                    if consolidated == "Standalone":
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_nse(ixbrl)
+                                        output.append({
+                                            "date": formatted or qe_date,
+                                            "consolidated": consolidated,
+                                            "amount_type": amount_type,
+                                            "format": format_type
+                                        })
+                                        response_list.append(output)
+                                if response_list:
+                                    quarterly_result = await decide_quarterly_format(response_list)
+                            if quarterly_result:
+                                company_stock = QuarterlyResultDateset(
+                                    company_id=company.id,
+                                    values=quarterly_result,
+                                    result_format=ResultFormatEnum.standalone
+                                )
+                                db.add(company_stock)
+                                db.flush()
+                                processed_symbols.append(company.nse_symbol)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                        else:
+                            unsaved_symbols.append(company.nse_symbol)
+
+                except Exception as e:
+                    print("Error:", str(e))
+                    print(f"\nFAILED company: {company.id} | {company.name}")
+                    error_symbols.append(company.nse_symbol)
+                    continue
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+        await save_quarterly_result_processed_symbol(unsaved_symbols, "unsaved")
+        await save_quarterly_result_processed_symbol(error_symbols, "error")
+        await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
+        await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")

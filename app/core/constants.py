@@ -1038,7 +1038,9 @@ PARENT_CHILD_MAP_GI = {
         "Other income Foreign exchange Gain/Loss",
         "Total other income",
         "Total income",
-        "Other income -Foreign exchange Gain/( Loss)"
+        "Other income -Foreign exchange Gain/( Loss)",
+        "Contribution from Shareholders Funds towards Excess EOM",
+        "Contribution towards remuneration of MD/CEO/WTD/Other KMPs"
     ],
 
     "Operating expenses": [
@@ -1900,6 +1902,73 @@ PARENT_CHILD_MAP_BSE_GI = {
 }
 
 PARENT_CHILD_MAP_BSE_LI = {
+
+    "Policy Income": [
+        "Policy Gross premium income",
+        "Policy First Year Premium",
+        "Policy Renewal Premium",
+        "Policy Single Premium",
+        "Policy Gross premium income",
+        "Policy Net premium income",
+        "Policy Income from investments (Net)",
+        "Policy Other income",
+        "Policy Share of profit of associates",
+        "Policy Minority Interest",
+        "Policy Total other income",
+        "Policy Transfer Of Funds From Shareholders Account",
+        "Policy Total Income"
+    ],
+
+    "Policy Expenses": [
+        "Policy Commission on",
+        "Policy First Year Premium",
+        "Policy Renewal Premium",
+        "Policy Single Premium",
+        "Policy Total Commission",
+        "Policy Net Commission",
+        "Policy Operating Expenses related to insurance business",
+        "Policy Employees remuneration and welfare expenses",
+        "Policy Administration expenses",
+        "Policy Advertisement and publicity",
+        "Policy Other operating expenses",
+        "Policy Rent Rates and Taxes",
+        "Policy Repairs",
+        "Policy Auditors' fees",
+        "Policy Auditors Fees",
+        "Policy Interest & Bank Charges",
+        "Policy Expenses on Investment Property",
+        "Policy Electricity Charges",
+        "Policy Depreciation",
+        "Policy Total other operating expenses",
+        "Policy Total operating expenses related to insurance business",
+        "Policy Total Expenses of Management",
+        "Policy Provisions for doubtful debts (including bad debts written off)",
+        "Policy Provisions for diminution in value of investments",
+        "Policy Goods & Service tax charge on linked charges",
+        "Policy Provision for taxes",
+        "Policy Current Tax",
+        "Policy Deffered Tax",
+        "Policy Total provision of taxes",
+        "Policy Benefits Paid (Net)",
+        "Benefits Paid 6(Net)2"
+        "Policy Change in actuarial liability",
+        "Policy Total Expenses",
+        "Policy Net Surplus(Deficit)"
+    ],
+
+    "Policy Appropriations": [
+        "Policy Transferred to Shareholders A/c",
+        "Policy Funds for Future Appropriation"
+    ],
+
+    "Policy Details of Surplus / Deficit": [
+        "Policy Interim bonus paid",
+        "Policy Surplus shown in the Revenue Account",
+        "Policy Allocation of bonus to policyholders",
+        "Policy Terminal bonus paid",
+        "Policy Total Surplus (Deficit)"
+    ],
+
     "Income": [
         "Transfer from Poliycholders' Account",
         "Income under Shareholders' Account",
