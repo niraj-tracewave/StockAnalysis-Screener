@@ -13,7 +13,8 @@ from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data_async, \
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async, \
     fetch_calculate_and_update_stock_dividend_data_async, fetch_calculate_and_update_stock_book_value_data_async, \
-    fetch_calculate_and_update_stock_roce_data_async, convert_stock_quarterly_result_data_async
+    fetch_calculate_and_update_stock_roce_data_async, convert_stock_quarterly_result_data_async, \
+    fetch_stock_quarterly_result_standalone_data_async
 from app.core.utils import run_async_task
 from app.db.postgres.sync_session import SessionLocalSync
 from app.db.redis.redis import redis_client
@@ -277,3 +278,13 @@ def convert_stock_quarterly_result_data():
     Background task to store NSE company data
     """
     run_async_task(convert_stock_quarterly_result_data_async())
+
+
+@celery_app.task(
+    name="fetch_stock_quarterly_result_standalone_data",
+)
+def fetch_stock_quarterly_result_standalone_data():
+    """
+    Background task to store NSE company data
+    """
+    run_async_task(fetch_stock_quarterly_result_standalone_data_async())

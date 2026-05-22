@@ -86,5 +86,9 @@ celery_app.conf.beat_schedule = {
     "convert_stock_quarterly_result": {
         "task": "convert_stock_quarterly_result_data",
         "schedule": crontab(minute="*/30"),
+    },
+    "fetch_stock_quarterly_result_standalone": {
+        "task": "fetch_stock_quarterly_result_standalone_data",
+        "schedule": crontab(minute="*/25"),
     }
 }
