@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 import ujson
 
-
+#bse new changes done
 class RawBSEClient:
     BASE = "https://api.bseindia.com/BseIndiaAPI/api"
 
@@ -64,7 +64,7 @@ class RawBSEClient:
             }),
 
             "header": ("ComHeadernew/w", {
-                "quotetype": "EQ",
+                "quotetype": "",
                 "scripcode": scripcode,
                 "seriesid": "",
             }),
@@ -106,7 +106,7 @@ class RawBSEClient:
                 "scripcode": scripcode
             }),
 
-            "results": ("ComHeadernew/w", {
+            "results": ("TabResults_PAR/w", {
                 "scripcode": scripcode,
                 "tabtype": "RESULTS"
             }),
@@ -116,7 +116,7 @@ class RawBSEClient:
                 "tabtype": "SHAREHOLDING"
             }),
 
-            "news": ("ComHeadernew/w", {
+            "news": ("TabResults_PAR/w", {
                 "scripcode": scripcode,
                 "tabtype": "NEWS"
             }),

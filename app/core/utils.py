@@ -3490,7 +3490,7 @@ async def save_bse_multiple_fii_shareholding(session, company_id, api_response):
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b2) institutions (foreign)" in name.lower():
+            if "institutions (foreign)" in name.lower():
                 start_fii = True
                 continue
 
@@ -3666,7 +3666,7 @@ async def save_bse_multiple_government_shareholding(session, company_id, api_res
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b3) central government/ state government(s)/ president of india" in name.lower():
+            if "central government/ state government(s)/ president of india" in name.lower():
                 start_government = True
                 continue
 
@@ -3861,7 +3861,7 @@ async def save_bse_multiple_public_shareholding(session, company_id, api_respons
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b4) non-institutions" in name.lower():
+            if "non-institutions" in name.lower():
                 start_public = True
                 continue
 
