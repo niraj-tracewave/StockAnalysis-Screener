@@ -1085,7 +1085,7 @@ async def update_nse_bse_stock_information_async():
                     stock_trading = bse_data.get('stockTrading')
                     total_market_cap = stock_trading.get('MktCapFull', None)
                     if total_market_cap:
-                        market_cap_cr = float(total_market_cap)
+                        market_cap_cr = float(str(total_market_cap).replace(",", ""))
                 company.details.roe = float(roe) if roe and roe != '-' else None
                 company.details.current_price = current_price
                 company.details.high_price = high_price
