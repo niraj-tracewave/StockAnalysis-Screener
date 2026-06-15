@@ -1409,9 +1409,8 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
 
         missing_symbols = missing_symbols[:50]
 
-        # current_processed_symbols = [c.nse_symbol for c in missing_symbols]
-        #
-        # await update_nse_bse_shareholder_save_processed_symbol(current_processed_symbols, "processing", file_name)
+        current_processed_symbols = [c.nse_symbol for c in missing_symbols]
+        await update_nse_bse_shareholder_save_processed_symbol(current_processed_symbols, "processing", file_name)
 
         def chunk_list(data, size):
             for i in range(0, len(data), size):
@@ -1424,7 +1423,7 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                     with db.begin_nested():
                         nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
                         bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
-                        if nse_company_list and bse_company_list and False:
+                        if nse_company_list and bse_company_list:
                             shareholding_list = await main_nse_fetch_shareholding_list(company.nse_symbol, "equities")
                             if shareholding_list:
                                 shareholding_data_list = []
@@ -1466,28 +1465,22 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                             for item in shareholding_list:
                                 qtr = item["qtr"]
 
-                                # replace old data with revised one
                                 if (
                                         qtr not in unique_data
                                         or item.get("status") != "Revised"
                                 ):
-                                    print(qtr)
                                     unique_data[qtr] = item
                             shareholding_list = list(unique_data.values())
-                            # print(shareholding_list)
                             if shareholding_list:
                                 shareholding_data_list = []
-                                for shareholding_obj in shareholding_list[:2]:
+                                for shareholding_obj in shareholding_list:
                                     if shareholding_obj.get("status") == "New":
                                         navigateurl_promoter = f"Corp_shpPromoterNGroup_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get("qtrid")}"
-                                        # navigateurl_promoter = f"corporates/shpPromoterNGroup.aspx?scripcd={company.bse_code}&qtrid={shareholding_obj.get("qtrid")}&QtrName={shareholding_obj.get("qtr")}"
-                                        # navigateurl_publicshareholder = f"corporates/shpPublicShareholder.aspx?scripcd={company.bse_code}&qtrid={shareholding_obj.get("qtrid")}&QtrName={shareholding_obj.get("qtr")}"
                                         navigateurl_publicshareholder = f"Corp_shpSec_SHPPubShold_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get("qtrid")}"
-                                        # promoter_data = await new_parse_bse_promoter_table(navigateurl_promoter)
-                                        promoter_data = await new_parse_bse_public_shareholder_table(navigateurl_publicshareholder)
-                                        # promoter_data.update(public_shareholder_data)
+                                        promoter_data = await new_parse_bse_promoter_table(navigateurl_promoter)
+                                        public_shareholder_data = await new_parse_bse_public_shareholder_table(navigateurl_publicshareholder)
+                                        promoter_data.update(public_shareholder_data)
                                         promoter_data.update({"date": shareholding_obj.get("qtr")})
-                                        print(promoter_data)
 
                                         shareholding_data_list.append(promoter_data)
                                 await save_bse_multiple_shareholding(db, company.id, shareholding_data_list)
@@ -1544,10 +1537,9 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
         raise
     finally:
         db.close()
-        # await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
-        # await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
-        # await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
-
+        await update_nse_bse_shareholder_save_processed_symbol(unsaved_symbols, "data_not_available", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(error_symbols, "error", file_name)
+        await update_nse_bse_shareholder_save_processed_symbol(processed_symbols, "processed_symbols", file_name)
 
 async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidated_data_async():
     db = SessionLocalSync()

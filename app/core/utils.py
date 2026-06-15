@@ -3666,7 +3666,7 @@ async def save_bse_multiple_government_shareholding(session, company_id, api_res
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "central government/ state government(s)/ president of india" in name.lower():
+            if "central  government/  state  government(s)/ president of india" in name.lower():
                 start_government = True
                 continue
 
