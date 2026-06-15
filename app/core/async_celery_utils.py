@@ -36,10 +36,12 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     update_nse_bse_balance_sheet_and_profit_loss_and_cash_flow_save_processed_symbol, fetch_dividend_values, \
     fetch_integrated_filing_financials_data_from_nse_for_book_value, \
     fetch_integrated_filing_financials_data_for_roce_from_nse, convert_existing_nse_to_screener, \
-    fetch_integrated_filing_financials_data_type_from_nse
+    fetch_integrated_filing_financials_data_type_from_nse, \
+    fetch_integrated_filing_financials_data_from_bse_for_book_value
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, \
-    parse_bse_promoter_table, new_parse_bse_promoter_table, new_parse_bse_public_shareholder_table
+    parse_bse_promoter_table, new_parse_bse_promoter_table, new_parse_bse_public_shareholder_table, \
+    main_bse_cshp_fetch_shareholding_list
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_balance_sheet_data import main_balance_sheet_html, main_find_company_json, \
     main_balance_sheet_standalone_html
@@ -2289,12 +2291,132 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                 unsaved_symbols.append(company.nse_symbol)
                                 continue
                         elif bse_company_list:
-                            pass
+                            integrated_filing_financials_list = await main_bse_fetch_integrated_filing_financials(
+                                company.bse_code)
+                            total_equity = 0
+                            col_iv = 0
+                            output_obj = {}
+                            if integrated_filing_financials_list:
+                                consolidated_list = []
+                                standalone_list = []
+                                for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
+                                    financial_name_obj = await parse_financial_name(
+                                        integrated_filing_obj.get("Quarter_Name"))
+                                    consolidated = financial_name_obj.get("type")
+                                    if consolidated == "standalone" and financial_name_obj.get("period") == "qtr":
+                                        standalone_list.append(integrated_filing_obj)
+                                    if consolidated == "consolidated" and financial_name_obj.get("period") == "qtr":
+                                        consolidated_list.append(integrated_filing_obj)
+                                # print("okokok------")
+                                # print(len(standalone_list))
+                                # print(len(consolidated_list))
+                                if consolidated_list:
+                                    for i in consolidated_list:
+                                        ixbrl = i.get("xbrlurl")
+                                        ixbrl = f"https://www.bseindia.com{ixbrl}"
+                                        print(ixbrl)
+                                        financial_name_obj = await parse_financial_name(
+                                            i.get("Quarter_Name"))
+                                        qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
+                                            ixbrl)
+                                        if output:
+                                            output['date'] = qe_date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_obj = output
+                                            break
+                                # print(output_obj)
+                                if not output_obj:
+                                    for st in standalone_list[4:]:
+                                        ixbrl = st.get("xbrlurl")
+                                        ixbrl = f"https://www.bseindia.com{ixbrl}"
+                                        financial_name_obj = await parse_financial_name(
+                                            st.get("Quarter_Name"))
+                                        qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                        # print(qe_date, st.get("Quarter_Name"))
+                                        output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
+                                            ixbrl)
+                                        if output:
+                                            output['date'] = qe_date
+                                            output['amount_type'] = amount_type
+                                            output['format_type'] = format_type
+                                            output_obj = output
+                                            break
+                                print(output_obj)
+
+                                if not output_obj:
+                                    unsaved_symbols.append(company.nse_symbol)
+                                    continue
+
+                                if output_obj.get("format_type") == "INDAS":
+                                    total_equity = to_decimal(
+                                        output_obj.get("Total equity attributable to owners of parent"))
+                                    print(total_equity)
+                                elif output_obj.get("format_type") == "BANKING":
+                                    capital = to_decimal(output_obj.get("Capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    total_equity = capital + reserves_and_surplus
+                                    print(total_equity)
+                                elif output_obj.get("format_type") == "NBFC":
+                                    total_equity = to_decimal(
+                                        output_obj.get("Total equity attributable to owners of parent"))
+                                    print(total_equity)
+                                elif output_obj.get("format_type") == "General Insurance":
+                                    share_capital = to_decimal(output_obj.get("Share capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    shareholder_fund = to_decimal(output_obj.get("Shareholders funds"))
+                                    total_equity = share_capital + reserves_and_surplus + shareholder_fund
+                                    print(total_equity)
+                                elif output_obj.get("format_type") == "Life Insurance":
+                                    share_capital = to_decimal(output_obj.get("Share capital"))
+                                    reserves_and_surplus = to_decimal(output_obj.get("Reserves and surplus"))
+                                    total_equity = share_capital + reserves_and_surplus
+                                    print(total_equity)
+
+                                if output_obj.get("amount_type") == "Lakhs":
+                                    total_equity = total_equity * 100000
+                                if total_equity:
+                                    shareholding_list = await main_bse_cshp_fetch_shareholding_list(company.nse_symbol,
+                                                                                               company.bse_code)
+                                    shareholding_obj = find_by_date(shareholding_list, output_obj.get("date"))
+                                    if shareholding_obj:
+                                        pass
+                                        # row = {
+                                        #     "date": shareholding_obj.get("date"),
+                                        #     "remarksWeb": shareholding_obj.get("remarksWeb"),
+                                        #     "revisionRemark": shareholding_obj.get("revisionRemark"),
+                                        #     "revisionDate": shareholding_obj.get("revisionDate"),
+                                        # }
+                                        # shareholding_all_data = await main_nse_fetch_shareholding_data_using_api_for_book_value(
+                                        #     id="popup1",
+                                        #     symbol=shareholding_obj.get("symbol"),
+                                        #     name=shareholding_obj.get("name"),
+                                        #     rec_id=shareholding_obj.get("recordId"),
+                                        #     row=row)
+                                        # if shareholding_all_data.get("type") == "data":
+                                        #     total_row = next(
+                                        #         item for item in shareholding_all_data['result']['data']['summary']
+                                        #         if item['COL_II'] == 'Total'
+                                        #     )
+                                        #     col_iv = total_row['COL_VII']
+                                        #     col_iv = int(col_iv)
+                                    else:
+                                        unsaved_symbols.append(company.nse_symbol)
+                                        continue
+
+                                    if col_iv:
+                                        book_value = total_equity / col_iv
+                                        book_value = round(book_value, 2)
+                            else:
+                                unsaved_symbols.append(company.nse_symbol)
+                                continue
+
                         else:
                             unsaved_symbols.append(company.nse_symbol)
                             continue
-                        company.details.book_value = book_value
-                        processed_symbols.append(company.nse_symbol)
+                        # company.details.book_value = book_value
+                        # processed_symbols.append(company.nse_symbol)
                     except Exception as e:
                         savepoint.rollback()
                         raise

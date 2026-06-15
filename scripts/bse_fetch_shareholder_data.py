@@ -288,3 +288,38 @@ async def new_parse_bse_public_shareholder_table(url):
     return {
         "public": results,
     }
+
+
+import aiohttp
+
+integrated_filing_url = "https://api.bseindia.com/BseIndiaAPI/api/CorporatesSHPSecuritybeta/w"
+
+shareholder_list_headers = {
+    "authority": "api.bseindia.com",
+    "method": "GET",
+    "scheme": "https",
+    "accept": "application/json, text/plain, */*",
+    "origin": "https://www.bseindia.com",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Linux\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+}
+async def fetch_data(qtrid, scripcode):
+    original_url = f"{integrated_filing_url}?scripcode={scripcode}&qtrid={qtrid}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(original_url, headers={**shareholder_list_headers, "path": f"/BseIndiaAPI/api/CorporatesSHPSecuritybeta/w?scripcode={scripcode}&qtrid={qtrid}",
+                                                      "referer": f"https://www.bseindia.com/"}) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data
+
+
+async def main_bse_cshp_fetch_shareholding_list(qtrid, scripcode):
+    data = await fetch_data(qtrid, scripcode)
+    return data
