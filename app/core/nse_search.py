@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from app.core import utils
 
 url = "https://www.nseindia.com/api/search/autocomplete"
+new_url = "https://www.nseindia.com/api/NextApi/globalSearch/equity"
 headers ={
     "authority": "www.nseindia.com",
     "method": "GET",
@@ -26,6 +27,25 @@ headers ={
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
     "x-requested-with": "XMLHttpRequest"
   }
+
+new_nse_header = {
+    "authority": "www.nseindia.com",
+    "method": "GET",
+    "scheme": "https",
+    "accept": "*/*",
+    "accept-encoding": "gzip, deflate, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "if-none-match": "\"z3d5cc0fhe1mr\"",
+    "priority": "u=1, i",
+    "referer": "https://www.nseindia.com/get-quote/equity/TCS/Tata-Consultancy-Services-Limited",
+    "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Linux\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+}
 
 async def get_nse_code_from_angel(symbol: str):
     return utils.ANGEL_NSE_MAP.get(symbol)
@@ -65,22 +85,21 @@ async def fetch_nse_exact_symbol_data(search):
 
     timeout = aiohttp.ClientTimeout(total=10)
 
-    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+    async with aiohttp.ClientSession(headers={**new_nse_header, "path": f"/api/NextApi/globalSearch/equity?symbol={search}",}, timeout=timeout) as session:
         async with session.get(
-                f"{url}",
-                params={"q": search},
+                f"{new_url}",
+                params={"symbol": search},
         ) as response:
             if response.status != 200:
                 return company_list
 
             data = await response.json()
-            if data.get("symbols", []):
-                symbol_data = next((item for item in data.get("symbols") if item["symbol"] == search), None)
+            if data.get("data", []):
+                symbol_data = next((item for item in data.get("data") if item["symbol"] == search), None)
                 if symbol_data:
-                    activeSeries = symbol_data.get("activeSeries")
+                    activeSeries = symbol_data.get("series")
                     if activeSeries:
-                        series = activeSeries[0]
-                        nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{series}")
+                        nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{activeSeries}")
                         company_list.append({
                                 "symbol": symbol_data.get("symbol"),
                                 "company_name": symbol_data.get("symbol_info"),
