@@ -30,20 +30,20 @@ async def main_bse_fetch_shareholding_list(scripcode):
 
 
 HEADERS = {
-  "authority": "www.bseindia.com",
+  "authority": "api.bseindia.com",
   "method": "GET",
   "scheme": "https",
-  "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+  "accept": "application/json, text/plain, */*",
   "accept-language": "en-US,en;q=0.9",
-  "priority": "u=0, i",
+  "priority": "u=1, i",
+  "Origin": "https://www.bseindia.com",
+    "referer": "https://www.bseindia.com/",
   "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
   "sec-ch-ua-mobile": "?0",
   "sec-ch-ua-platform": "\"Linux\"",
-  "sec-fetch-dest": "document",
-  "sec-fetch-mode": "navigate",
-  "sec-fetch-site": "none",
-  "sec-fetch-user": "?1",
-  "upgrade-insecure-requests": "1",
+  "sec-fetch-dest": "empty",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-site": "same-site",
   "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 }
 
@@ -122,6 +122,63 @@ async def parse_bse_promoter_table(url):
         "summary": summary
     }
 
+async def new_parse_bse_promoter_table(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://api.bseindia.com/BseIndiaAPI/api/{url}", headers={**HEADERS, "path": f"/BseIndiaAPI/api/{url}"}) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+
+    if not data:
+        return {"promoter": [], "summary": {}}
+
+    table = data.get("Table1")
+    if not table:
+        return {"promoter": [], "summary": {}}
+
+    results = []
+    summary = {}
+    for row in table:
+        flag = row.get("Flag")
+
+        if not flag:
+            continue
+
+        name = row.get("Fld_ShareHolderName")
+        if not name:
+            name = row.get("Fld_SubCategory")
+        if not name:
+            name = row.get("Fld_Level")
+        entity_type = row.get("FLd_ShareholderType")
+
+        if name and "A=A1+A2" in name:
+            summary = {
+                "label": name,
+                "shareholding_percent": row.get("Fld_TotalPercentageOf_A_B_C2")
+            }
+            continue
+
+        if any(x in name for x in ["Sub Total", "A1", "A2"]):
+            continue
+
+        if entity_type:
+            if "Promoter" not in entity_type:
+                continue
+        else:
+            continue
+
+        if entity_type:
+            shareholding_percent = row.get("Fld_TotalPercentageOf_A_B_C2")
+        else:
+            shareholding_percent = row.get("Fld_TotalPercentageOf_A_B_C2")
+
+        results.append({
+            "name": name,
+            "shareholding_percent": shareholding_percent
+        })
+    return {
+        "promoter": results,
+        "summary": summary
+    }
 
 async def parse_bse_public_shareholder_table(url):
     async with aiohttp.ClientSession() as session:
@@ -181,3 +238,88 @@ async def parse_bse_public_shareholder_table(url):
     return {
         "public": results,
     }
+
+async def new_parse_bse_public_shareholder_table(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://api.bseindia.com/BseIndiaAPI/api/{url}", headers={**HEADERS, "path": f"/BseIndiaAPI/api/{url}"}) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+    # print(data)
+    if not data:
+        return {"public": []}
+
+    table = data.get("Table1")
+    if not table:
+        return {"public": []}
+
+    if not table:
+        return {"public": []}
+
+    results = []
+
+    skips_list = {"B=B1+B2+B3+B4", "Institutions"}
+    # print(table)
+    for row in table:
+        flag = row.get("Flag")
+
+        if not flag:
+            continue
+
+        name = row.get("Fld_ShareHolderName")
+        if not name:
+            name = row.get("Fld_Level")
+        if not name:
+            name = row.get("Fld_SubCategory")
+
+
+        if name in skips_list:
+            continue
+
+        is_bold = True if flag == 1 else False
+
+        shareholding_percent = row.get("Fld_TotalPercentageOf_A_B_C2")
+
+        results.append({
+            "name": name,
+            "shareholding_percent": shareholding_percent,
+            "is_bold": is_bold
+        })
+
+    return {
+        "public": results,
+    }
+
+
+import aiohttp
+
+integrated_filing_url = "https://api.bseindia.com/BseIndiaAPI/api/CorporatesSHPSecuritybeta/w"
+
+shareholder_list_headers = {
+    "authority": "api.bseindia.com",
+    "method": "GET",
+    "scheme": "https",
+    "accept": "application/json, text/plain, */*",
+    "origin": "https://www.bseindia.com",
+    "accept-language": "en-US,en;q=0.9",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Linux\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+}
+async def fetch_data(qtrid, scripcode):
+    original_url = f"{integrated_filing_url}?scripcode={scripcode}&qtrid={qtrid}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(original_url, headers={**shareholder_list_headers, "path": f"/BseIndiaAPI/api/CorporatesSHPSecuritybeta/w?scripcode={scripcode}&qtrid={qtrid}",
+                                                      "referer": f"https://www.bseindia.com/"}) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data
+
+
+async def main_bse_cshp_fetch_shareholding_list(qtrid, scripcode):
+    data = await fetch_data(qtrid, scripcode)
+    return data
