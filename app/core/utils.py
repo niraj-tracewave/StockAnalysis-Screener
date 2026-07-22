@@ -1773,6 +1773,68 @@ async def bse_fetch_th_tr_from_li_table(rows_data):
             final_data.append(f_json)
     return final_data
 
+async def bse_fetch_th_tr_from_li_table_roce(rows_data):
+    final_data = []
+    previous_raw = None
+    policy_prefix_active = False
+
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        tds = row.find_all("td")
+        f_json = {
+            "heading": None,
+            "value": None,
+        }
+        titles = {
+            "Gross NPAs": "Shareholders Gross NPAs",
+            "Net NPAs": "Shareholders Net NPAs",
+            "Percentage of Gross NPAs": "Shareholders Percentage of Gross NPAs",
+            "Percentage of Net NPAs": "Shareholders Percentage of Net NPAs",
+            "Without unrealised gains": "Shareholders Without unrealised gains",
+            "With unrealised gains": "Shareholders With unrealised gains"
+        }
+        if tds:
+            if len(tds) == 2:
+                section_name = tds[0].get_text(strip=True) if len(tds) > 1 else None
+            else:
+                section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+            f_json['heading'] = section_name
+            if section_name == "Policyholder's Accounts":
+                policy_prefix_active = True
+
+            if section_name == "NPA ratios: (for shareholder's fund)":
+                previous_raw = section_name
+
+            if tds:
+                value = None
+                if len(tds) == 4:
+                    section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    if previous_raw and previous_raw == "NPA ratios: (for shareholder's fund)" and titles.get(
+                            section_name):
+                        f_json["heading"] = titles.get(section_name) or section_name
+                    value_tag = tds[3].find("ix:nonfraction")
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[3].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
+
+            # Apply/stop "Policy" prefix AFTER heading is fully resolved
+            if f_json['heading'] == "Total Surplus(Deficit)" or f_json['heading'] == "Total Surplus (Deficit)":
+                f_json['heading'] = "Policy Total Surplus (Deficit)"
+                policy_prefix_active = False
+            elif policy_prefix_active and f_json['heading']:
+                f_json['heading'] = f"Policy {f_json['heading']}"
+
+            final_data.append(f_json)
+    return final_data
+
 async def fetch_bse_th_tr_from_table(rows_data):
     final_data = []
     for row in rows_data:
@@ -1797,6 +1859,38 @@ async def fetch_bse_th_tr_from_table(rows_data):
                     value_tag = tds[2].find("ix:nonfraction")
                     if value_tag:
                         text = value_tag.get_text(strip=True) if value_tag else tds[2].get_text(strip=True)
+                        sign = value_tag.get("sign")
+                        if sign == "-":
+                            text = "-" + text
+                        value = await parse_numeric(text)
+                    f_json['value'] = value
+            final_data.append(f_json)
+    return final_data
+
+async def fetch_bse_th_tr_from_table_roce(rows_data):
+    final_data = []
+    for row in rows_data:
+        tds = row.find_all("td", recursive=False)
+        ths = row.find_all("th", recursive=False)
+        if not tds and not ths:
+            continue
+
+        tds = row.find_all("td")
+        f_json = {
+            "heading": None,
+            "value": None,
+        }
+        if tds:
+            section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+            f_json['heading'] = section_name
+            if tds:
+                value=None
+                if len(tds) == 4:
+                    section_name = tds[1].get_text(strip=True) if len(tds) > 1 else None
+                    f_json['heading'] = section_name
+                    value_tag = tds[3].find("ix:nonfraction")
+                    if value_tag:
+                        text = value_tag.get_text(strip=True) if value_tag else tds[3].get_text(strip=True)
                         sign = value_tag.get("sign")
                         if sign == "-":
                             text = "-" + text
@@ -3490,7 +3584,7 @@ async def save_bse_multiple_fii_shareholding(session, company_id, api_response):
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b2) institutions (foreign)" in name.lower():
+            if "institutions (foreign)" in name.lower():
                 start_fii = True
                 continue
 
@@ -3666,7 +3760,7 @@ async def save_bse_multiple_government_shareholding(session, company_id, api_res
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b3) central government/ state government(s)/ president of india" in name.lower():
+            if "central  government/  state  government(s)/ president of india" in name.lower():
                 start_government = True
                 continue
 
@@ -3861,7 +3955,7 @@ async def save_bse_multiple_public_shareholding(session, company_id, api_respons
 
         for row in public_list:
             name = (row.get("name") or "").strip()
-            if "b4) non-institutions" in name.lower():
+            if "non-institutions" in name.lower():
                 start_public = True
                 continue
 
@@ -5199,6 +5293,152 @@ async def fetch_integrated_filing_financials_data_from_nse_for_book_value(url):
     except Exception as e:
         return [], None, None
 
+
+async def fetch_bse_th_tr_from_table_book_value(table):
+    final_data = {}
+    if table is None:
+        return final_data
+    rows = table.find_all("tr")
+    for row in rows:
+        tds = row.find_all("td")
+
+        if len(tds) != 3:
+            continue
+
+        heading = tds[1].get_text(strip=True)
+
+        value = None
+        value_tag = tds[2].find("ix:nonfraction")
+
+        if value_tag:
+            text = value_tag.get_text(strip=True)
+            sign = value_tag.get("sign")
+
+            if sign == "-":
+                text = f"-{text}"
+
+            value = await parse_numeric(text)
+
+        final_data[heading] = value
+
+    return final_data
+
+async def fetch_integrated_filing_financials_data_from_bse_for_book_value(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "authority": "www.bseindia.com",
+            "method": "GET",
+            "path": "/",
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        # # first hit homepage to get cookies
+        session.get("https://www.bseindia.com/", headers=headers)
+
+        path = url.split("www.bseindia.com/")[-1]
+
+        headers = {
+            "authority": "www.bseindia.com",
+            "method": "GET",
+            "path": path,
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x.lower())
+            result_type = None
+            if heading:
+                text = heading.get_text(strip=True)
+                result_type = text.split("-")[-1].strip()
+            if "_Ind_As_" in url:
+                target_table = None
+                if amount_type == "Crores":
+                    for h2 in soup.find_all("h2"):
+                        if "Statement of Asset and Liabilities" in h2.get_text(strip=True):
+                            target_table = h2.find_next("table")
+                            break
+                result = await fetch_bse_th_tr_from_table_book_value(target_table)
+                return result, amount_type, "INDAS"
+            if "Banking" == result_type:
+                target_table = None
+                if amount_type == "Crores":
+                    for h2 in soup.find_all("h2"):
+                        if "Statement of Asset and Liabilities" in h2.get_text(strip=True):
+                            target_table = h2.find_next("table")
+                            break
+                result = await fetch_bse_th_tr_from_table_book_value(target_table)
+                return result, amount_type, "BANKING"
+
+            if "NBFC" == result_type:
+                target_table = None
+                if amount_type == "Crores":
+                    for h2 in soup.find_all("h2"):
+                        if "Statement of Asset and Liabilities" in h2.get_text(strip=True):
+                            target_table = h2.find_next("table")
+                            break
+                result = await fetch_bse_th_tr_from_table_book_value(target_table)
+                return result, amount_type, "NBFC"
+
+            if "General Insurance".lower() in result_type:
+                target_table = None
+                tables = soup.find_all("table")
+                for table in tables:
+                    table_text = table.get_text(separator=" ")
+                    if "Sources of Funds" in table_text:
+                        target_table = table
+                        break
+                result = await fetch_bse_th_tr_from_table_book_value(target_table)
+                return result, amount_type, "General Insurance"
+
+            if "Life Insurance".lower() in result_type:
+                target_table = None
+                tables = soup.find_all("table")
+                for table in tables:
+                    table_text = table.get_text(separator=" ")
+                    if "Sources of Funds" in table_text:
+                        target_table = table
+                        break
+                result = await fetch_bse_th_tr_from_table_book_value(target_table)
+                return result, amount_type, "Life Insurance"
+
+            return [], None, None
+
+        return structured_with_values, None, None
+    except Exception as e:
+        print(str(e))
+        return [], None, None
+
 async def convert_to_dict(data):
     result = {}
     seen_keys = {}
@@ -5362,6 +5602,138 @@ async def fetch_integrated_filing_financials_data_for_roce_from_nse(url):
     except Exception as e:
         return [], None, None
 
+
+async def fetch_integrated_filing_financials_data_for_roce_from_bse(url):
+    try:
+        structured_with_values = []
+        session = requests.Session()
+
+        headers = {
+            "authority": "www.bseindia.com",
+            "method": "GET",
+            "path": "/",
+            "scheme": "https",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        session.get("https://www.bseindia.com/", headers=headers)
+
+        path = url.split("www.bseindia.com/")[-1]
+
+        headers = {
+            "authority": "www.bseindia.com",
+            "method": "GET",
+            "path": path,
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "cache-control": "max-age=0",
+            "priority": "u=0, i",
+            "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Linux\"",
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        }
+        resp = session.get(url, headers=headers)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            amount_type = soup.find("td", string="Level of rounding").find_next("td").text.strip()
+            heading = soup.find(["h1", "h2"], string=lambda x: x and "Financial Results".lower() in x.lower())
+            result_type = None
+            if heading:
+                text = heading.get_text(strip=True)
+                result_type = text.split("-")[-1].strip()
+
+            if "_Ind_As_" in url:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+                final_data = {}
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table_roce(rows)
+                    final_data = await convert_to_dict(final_data)
+                return final_data, amount_type, "INDAS"
+            if "Banking" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+                final_data = {}
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table_roce(rows)
+                    final_data = await convert_to_dict(final_data)
+                return final_data, amount_type, "BANKING"
+
+            if "NBFC" == result_type:
+                table = soup.select_one("h2:-soup-contains('Financial Results') + p + table")
+                final_data = {}
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table_roce(rows)
+                    final_data = await convert_to_dict(final_data)
+                return final_data, amount_type, "NBFC"
+
+            if "General Insurance".lower() in result_type:
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+                final_data = {}
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    final_data = await fetch_bse_th_tr_from_table_roce(rows)
+                    final_data = await convert_to_dict(final_data)
+                return final_data, amount_type, "General Insurance"
+
+            if "Life Insurance".lower() in result_type:
+                table = soup.select_one("h2:-soup-contains('financial results') + p + table")
+                final_data = {}
+                if table:
+                    rows = [
+                        tr for tr in table.find_all("tr")
+                        if tr.get_text(strip=True)
+                    ]
+                    start_index = None
+                    for i, tr in enumerate(rows):
+                        text = tr.get_text(" ", strip=True).lower()
+                        if "Income" in text:
+                            start_index = i
+                            break
+
+                    if start_index is not None:
+                        rows = rows[start_index + 1:]
+                    final_data = await bse_fetch_th_tr_from_li_table_roce(rows)
+                    final_data = await convert_to_dict(final_data)
+                return final_data, amount_type, "Life Insurance"
+
+            return [], None, None
+
+        return structured_with_values, None, None
+    except Exception as e:
+        return [], None, None
 
 import json
 
