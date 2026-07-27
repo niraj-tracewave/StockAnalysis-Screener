@@ -1,9 +1,11 @@
+from typing import List
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from starlette import status
 
 from app.apis.deps import get_db, get_external_db
-from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, UpdateStockPriceSchema
+from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, UpdateStockPriceSchema, SectorStockRequest
 from app.apis.v1.services.stock_data import CompanyStockFetchService
 from app.core.security import optional_get_current_user
 
@@ -87,3 +89,13 @@ async def search_company(request: UpdateStockPriceSchema,
 @router.get("/download-scripcode-file/", status_code=status.HTTP_200_OK)
 async def search_company():
     return await CompanyStockFetchService.download_scrip_master_file()
+
+
+@router.get("/sector-list/", status_code=status.HTTP_200_OK)
+async def search_company(db: Session = Depends(get_db)):
+    return await CompanyStockFetchService.sector_list(db)
+
+@router.get("/sector-wise-stock-list/", status_code=status.HTTP_200_OK)
+async def search_company( sectors: List[str] = Query(...),
+    db: Session = Depends(get_db),):
+    return await CompanyStockFetchService.sector_vise_stock_list(sectors, db)

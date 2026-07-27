@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from dateutil.relativedelta import relativedelta
@@ -1277,3 +1278,85 @@ class CompanyStockFetchService:
             raise CustomValidationError(
                 {"error": [str(e)]}, 200
             )
+
+    @staticmethod
+    async def sector_list(db: Session = Depends(get_db)):
+        try:
+            normalized_sector = func.initcap(
+                func.lower(
+                    func.replace(
+                        func.trim(CompanyStock.sector),
+                        ",",
+                        ""
+                    )
+                )
+            ).label("sector")
+
+            stmt = (
+                select(normalized_sector)
+                .where(
+                    CompanyStock.sector.is_not(None),
+                    func.trim(CompanyStock.sector) != ""
+                )
+                .distinct()
+                .order_by(normalized_sector)
+            )
+            result = await db.execute(stmt)
+            sectors = result.scalars().all()
+
+            return CustomJSONResponse.custom_response(
+                message="Sector list fetched successfully.",
+                data={"data": sectors}
+            )
+        except Exception as e:
+            raise CustomValidationError(
+                {"error": [str(e)]}, 200
+            )
+
+    @staticmethod
+    async def sector_vise_stock_list(sectors,  db):
+        try:
+            normalized_sectors = [
+                sector.strip().lower().replace(",", "")
+                for sector in sectors
+            ]
+
+            normalized_sector = func.replace(
+                func.trim(CompanyStock.sector),
+                ",",
+                ""
+            ).label("sector")
+
+            stmt = (
+                select(
+                    normalized_sector,
+                    CompanyStock.nse_symbol
+                )
+                .where(
+                    func.replace(
+                        func.lower(func.trim(CompanyStock.sector)),
+                        ",",
+                        ""
+                    ).in_(normalized_sectors)
+                )
+                .order_by(normalized_sector, CompanyStock.nse_symbol)
+            )
+
+            result = await db.execute(stmt)
+
+            response = defaultdict(list)
+
+            for sector, symbol in result:
+                if symbol:
+                    response[sector].append(symbol)
+
+            return CustomJSONResponse.custom_response(
+                message="Stock list fetched successfully.",
+                data=dict(response),
+            )
+
+        except Exception as e:
+                raise CustomValidationError(
+                    {"error": [str(e)]},
+                    200,
+                )

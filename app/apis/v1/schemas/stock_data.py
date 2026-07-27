@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 from pydantic import BaseModel
 
@@ -35,3 +35,6 @@ class UpdateStockPriceSchema(BaseModel):
     price: float
     scrip: Optional[str] = None
     symbol: Optional[str] = None
+
+class SectorStockRequest(BaseModel):
+    sectors: List[str]
