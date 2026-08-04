@@ -1330,7 +1330,8 @@ class CompanyStockFetchService:
             stmt = (
                 select(
                     normalized_sector,
-                    CompanyStock.nse_symbol
+                    CompanyStock.nse_symbol,
+                    CompanyStock.name
                 )
                 .where(
                     func.replace(
@@ -1346,9 +1347,12 @@ class CompanyStockFetchService:
 
             response = defaultdict(list)
 
-            for sector, symbol in result:
+            for sector, symbol, company_name in result:
                 if symbol:
-                    response[sector].append(symbol)
+                    response[sector].append({
+                        "symbol": symbol,
+                        "company_name": company_name,
+                    })
 
             return CustomJSONResponse.custom_response(
                 message="Stock list fetched successfully.",
