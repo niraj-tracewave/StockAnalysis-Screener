@@ -102,11 +102,12 @@ async def fetch_nse_exact_symbol_data(search):
                         nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{activeSeries}")
                         company_list.append({
                                 "symbol": symbol_data.get("symbol"),
-                                "company_name": symbol_data.get("symbol_info"),
+                                "company_name": symbol_data.get("companyName"),
                                 "url": symbol_data.get("url"),
                                 "platform": "NSE",
                                 "nse_code": nse_code,
-                                "bse_code": None
+                                "bse_code": None,
+                                "series": symbol_data.get("series")
                             })
 
     return company_list

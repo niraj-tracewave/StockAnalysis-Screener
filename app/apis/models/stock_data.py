@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric
+from sqlalchemy import Column, String, Integer, ForeignKey, Float, Date, UniqueConstraint, Numeric, DateTime
 from sqlalchemy.orm import relationship
 
 from app.db.postgres.base import Base
@@ -136,6 +136,12 @@ class CompanyStock(Base):
         "CustomFormatQuarterlyResultDateset",
         back_populates="company",
         cascade="all, delete-orphan"
+    )
+
+    stock_delivery_data = relationship(
+        "StockDeliveryDataset",
+        back_populates="company",
+        cascade="all, delete-orphan",
     )
 
 
@@ -434,4 +440,36 @@ class CustomFormatQuarterlyResultDateset(Base):
     company = relationship(
         "CompanyStock",
         back_populates="custom_format_quarterly_result"
+    )
+
+
+class StockDeliveryDataset(Base):
+    __tablename__ = "stock_delivery_datasets"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    company_id = Column(
+        Integer,
+        ForeignKey("company_stock.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    trading_date = Column(DateTime, nullable=False, index=True)
+
+    combined_traded_volume = Column(Float, nullable=True)
+    combined_delivery_volume = Column(Float, nullable=True)
+    combined_delivery_percent = Column(Float, nullable=True)
+
+    price_change_percent = Column(Float, nullable=True)
+
+    insight = Column(String(100), nullable=True)
+
+    combined_rolling_week_avg_volume = Column(Float, nullable=True)
+    rolling_week_delivery_percent = Column(Float, nullable=True)
+    platform = Column(String(10), nullable=False)
+
+    company = relationship(
+        "CompanyStock",
+        back_populates="stock_delivery_data",
     )

@@ -1,20 +1,24 @@
 import asyncio
+import csv
 import json
 import logging
 import os
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from itertools import islice
+from zoneinfo import ZoneInfo
 
 import pytz
 from bs4 import BeautifulSoup
-from sqlalchemy import select, or_, delete, and_, exists
+from celery import group, shared_task
+from dateutil.relativedelta import relativedelta
+from sqlalchemy import select, or_, delete, and_, exists, desc, func, distinct
 from sqlalchemy.orm import selectinload
 
 from app.apis.models.company import Company
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, QuarterlyResultDateset, \
     ResultFormatEnum, ShareHoldingPeriod, BalanceSheetDataset, ProfitLossDataset, CashFlowDataset, \
-    CustomFormatQuarterlyResultDateset
+    CustomFormatQuarterlyResultDateset, StockDeliveryDataset
 from app.core.logging_config import setup_logging
 from app.core.nse_search import fetch_nse_exact_symbol_data, fetch_bse_exact_symbol_data, fetch_nse_data, \
     fetch_bse_data, fetch_bse_exact_symbol_data_from_json
@@ -38,11 +42,17 @@ from app.core.utils import filter_exchange_data_from_file, fetch_symbols_from_co
     fetch_integrated_filing_financials_data_for_roce_from_nse, convert_existing_nse_to_screener, \
     fetch_integrated_filing_financials_data_type_from_nse, \
     fetch_integrated_filing_financials_data_from_bse_for_book_value, \
-    fetch_integrated_filing_financials_data_for_roce_from_bse
+    fetch_integrated_filing_financials_data_for_roce_from_bse, \
+    update_nse_bse_gross_deliverable_data_save_processed_symbol, \
+    update_nse_bse_gross_deliverable_data_load_processed_symbols, \
+    sync_update_nse_bse_gross_deliverable_data_save_processed_symbol, \
+    update_nse_bse_gross_deliverable_count_load_processed_symbols, \
+    update_nse_bse_gross_deliverable_list_load_processed_symbols
 from app.db.postgres.sync_session import SessionLocalSync
 from scripts.bse_fetch_shareholder_data import main_bse_fetch_shareholding_list, parse_bse_public_shareholder_table, \
     parse_bse_promoter_table, new_parse_bse_promoter_table, new_parse_bse_public_shareholder_table, \
     main_bse_cshp_fetch_shareholding_list
+from scripts.bse_gross_deliverables import main_bse_fetch_gross_delivery_history, fetch_bse_security_position
 from scripts.bse_stock_price_graph import new_main_fetch_stock_price_for_bse_graph
 from scripts.fetch_balance_sheet_data import main_balance_sheet_html, main_find_company_json, \
     main_balance_sheet_standalone_html
@@ -53,6 +63,8 @@ from scripts.fetch_integrated_filling_financials import main_fetch_integrated_fi
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_fetch_shareholder_data import main_nse_fetch_shareholding_list, \
     main_nse_fetch_shareholding_data_using_api, main_nse_fetch_shareholding_data_using_api_for_book_value
+from scripts.nse_gross_deliverables import main_nse_fetch_security_wise_historical_data
+from scripts.nse_metadata_and_symboldata import fetch_nse_metadata, fetch_nse_symbol_data
 from scripts.nse_newly_listed_stocks import main_nse_newly_listed_stocks
 from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
 from scripts.nse_with_rotating_ip import main
@@ -3263,3 +3275,667 @@ async def fetch_stock_quarterly_result_standalone_data_async():
         await save_quarterly_result_processed_symbol(error_symbols, "error")
         await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
         await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
+
+
+# Gross delivery
+
+def bulk_insert_stock_delivery(
+    session,
+    company_id: int,
+    delivery_data: list,
+    platform : str
+):
+    records = []
+
+    delivery_data.sort(key=lambda x: x["dt_tm"])
+
+    for i, item in enumerate(delivery_data):
+        rolling_avg_volume = None
+        rolling_delivery_percent = None
+        insight = None
+
+        if i >= 4:
+            window = delivery_data[i - 4:i + 1]
+
+            total_traded = sum(x["No_Of_Shares"] for x in window)
+            total_delivery = sum(x["Delivery_Qty"] for x in window)
+
+            rolling_avg_volume = total_traded / len(window)
+            rolling_delivery_percent = (
+                round((total_delivery / total_traded) * 100, 2)
+                if total_traded
+                else None
+            )
+
+            if rolling_delivery_percent is not None:
+                current_delivery_percent = item.get("Perc_Del_Qty", 0)
+                diff = round(
+                    current_delivery_percent - rolling_delivery_percent,
+                    2,
+                )
+
+                if diff >= 12:
+                    insight = "Jump in delivery"
+                elif diff >= 5:
+                    insight = "Rising delivery"
+                elif diff <= -12:
+                    insight = "Drop in delivery"
+                elif diff <= -6:
+                    insight = "Falling delivery"
+                else:
+                    insight = "-"
+
+        records.append(
+            StockDeliveryDataset(
+                company_id=company_id,
+                trading_date=datetime.fromisoformat(item["dt_tm"]),
+                combined_traded_volume=item.get("No_Of_Shares"),
+                combined_delivery_volume=item.get("Delivery_Qty"),
+                combined_delivery_percent=item.get("Perc_Del_Qty"),
+                insight=insight,
+                combined_rolling_week_avg_volume=rolling_avg_volume,
+                rolling_week_delivery_percent=rolling_delivery_percent,
+                platform=platform
+            )
+        )
+
+    session.add_all(records)
+
+
+def bulk_nse_insert_stock_delivery(
+    session,
+    company_id: int,
+    delivery_data: list,
+    platform: str,
+):
+    records = []
+
+    # Oldest -> Newest
+    delivery_data.sort(
+        key=lambda x: datetime.strptime(
+            x["mTIMESTAMP"],
+            "%d-%b-%Y",
+        )
+    )
+
+    for i, item in enumerate(delivery_data):
+        rolling_avg_volume = None
+        rolling_delivery_percent = None
+        insight = None
+
+        if i >= 4:
+            window = delivery_data[i - 4:i + 1]
+
+            total_traded = sum(
+                x["CH_TOT_TRADED_QTY"] for x in window
+            )
+
+            total_delivery = sum(
+                x["COP_DELIV_QTY"] for x in window
+            )
+
+            rolling_avg_volume = round(
+                total_traded / len(window),
+                2,
+            )
+
+            rolling_delivery_percent = (
+                round(
+                    (total_delivery / total_traded) * 100,
+                    2,
+                )
+                if total_traded
+                else None
+            )
+
+            if rolling_delivery_percent is not None:
+                current_delivery_percent = item["COP_DELIV_PERC"]
+
+                diff = round(
+                    current_delivery_percent
+                    - rolling_delivery_percent,
+                    2,
+                )
+
+                if diff >= 12:
+                    insight = "Jump in delivery"
+                elif diff >= 5:
+                    insight = "Rising delivery"
+                elif diff <= -12:
+                    insight = "Drop in delivery"
+                elif diff <= -6:
+                    insight = "Falling delivery"
+                else:
+                    insight = "-"
+
+        previous_close = item.get("CH_PREVIOUS_CLS_PRICE")
+        close_price = item.get("CH_CLOSING_PRICE")
+
+        price_change = None
+        if previous_close:
+            price_change = round(
+                ((close_price - previous_close) / previous_close)
+                * 100,
+                2,
+            )
+
+        records.append(
+            StockDeliveryDataset(
+                company_id=company_id,
+                trading_date=datetime.strptime(
+                    item["mTIMESTAMP"],
+                    "%d-%b-%Y",
+                ),
+
+                combined_traded_volume=item["CH_TOT_TRADED_QTY"],
+                combined_delivery_volume=item["COP_DELIV_QTY"],
+                combined_delivery_percent=item["COP_DELIV_PERC"],
+
+                price_change_percent=price_change,
+
+                insight=insight,
+                combined_rolling_week_avg_volume=rolling_avg_volume,
+                rolling_week_delivery_percent=rolling_delivery_percent,
+
+                platform=platform,
+            )
+        )
+
+    session.add_all(records)
+
+def parse_number(value):
+    """
+    Converts values like:
+    2,365.60 -> 2365.60
+    30,36,839 -> 3036839
+    """
+    if value is None or value == "":
+        return None
+
+    value = value.replace(",", "").strip()
+
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+async def parse_nse_delivery_csv(csv_file_path):
+    data = []
+
+    with open(csv_file_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            row = {k.strip(): v for k, v in row.items()}
+
+            trade_date = datetime.strptime(
+                row["Date"], "%d-%b-%Y"
+            )
+
+            data.append(
+                {
+                    "CH_SYMBOL": row["Symbol"],
+                    "CH_SERIES": row["Series"],
+                    "mTIMESTAMP": row["Date"],
+
+                    "CH_PREVIOUS_CLS_PRICE": parse_number(row["Prev Close"]),
+                    "CH_OPENING_PRICE": parse_number(row["Open Price"]),
+                    "CH_TRADE_HIGH_PRICE": parse_number(row["High Price"]),
+                    "CH_TRADE_LOW_PRICE": parse_number(row["Low Price"]),
+                    "CH_LAST_TRADED_PRICE": parse_number(row["Last Price"]),
+                    "CH_CLOSING_PRICE": parse_number(row["Close Price"]),
+                    "VWAP": parse_number(row["Average Price"]),
+                    "CH_TOT_TRADED_QTY": parse_number(row["Total Traded Quantity"]),
+                    "CH_TOTAL_TRADES": parse_number(row["No. of Trades"]),
+
+                    "CH_TIMESTAMP": (
+                        trade_date.strftime("%Y-%m-%d")
+                        + "T18:30:00.000Z"
+                    ),
+
+                    "COP_DELIV_QTY": parse_number(row["Deliverable Qty"]),
+                    "COP_DELIV_PERC": parse_number(row["% Dly Qt to Traded Qty"]),
+                }
+            )
+
+    return {"data": data}
+
+async def fetch_gross_deliverables_nse_bse_stock_information_async():
+    db = SessionLocalSync()
+    try:
+        stmt = (
+                select(CompanyStock)
+                .outerjoin(
+                    KeyDetailsForCS,
+                    CompanyStock.id == KeyDetailsForCS.company_id
+                )
+                .options(selectinload(CompanyStock.details))
+            )
+        file_name = "update_nse_bse_gross_deliverables_data.json"
+        error_symbols = []
+        result = db.execute(stmt)
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
+        new_process_symbol = []
+        unprocessed_companies = []
+        for c in result.scalars():
+            if c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if len(unprocessed_companies) == 50:
+                    break
+        started_symbols = [c.nse_symbol for c in unprocessed_companies]
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
+        for company in unprocessed_companies:
+            try:
+                nse_company_list, bse_company_list = await asyncio.gather(
+                    fetch_nse_exact_symbol_data(company.nse_symbol),
+                    fetch_bse_exact_symbol_data(company.nse_symbol),
+                )
+
+                if nse_company_list:
+                    symbol = nse_company_list[0].get("symbol")
+                    series = nse_company_list[0].get("series")
+                    c_date  = datetime.now(ZoneInfo("Asia/Kolkata"))
+                    previous_date_5years = c_date - relativedelta(years=5)
+                    from_date = previous_date_5years.strftime("%d-%m-%Y")
+                    to_date = c_date.strftime("%d-%m-%Y")
+                    gross_delivery_path = await main_nse_fetch_security_wise_historical_data(symbol, from_date, to_date, series)
+                    gross_delivery_data = await parse_nse_delivery_csv(gross_delivery_path)
+                    bulk_nse_insert_stock_delivery(db, company.id, gross_delivery_data.get("data"), "NSE")
+
+                if bse_company_list:
+                    bse_code = bse_company_list[0].get("bse_code")
+                    c_date = datetime.now(ZoneInfo("Asia/Kolkata"))
+                    previous_date_5years = c_date - relativedelta(years=5)
+                    from_date = previous_date_5years.strftime("%d/%m/%Y")
+                    to_date = c_date.strftime("%d/%m/%Y")
+                    gross_delivery_data = await main_bse_fetch_gross_delivery_history(bse_code, from_date, to_date)
+                    bulk_insert_stock_delivery(db, company.id, gross_delivery_data.get("Table"), "BSE")
+                print("------------------------------------------------------------------------------------")
+
+                db.commit()
+                new_process_symbol.append(company.nse_symbol)
+                if os.path.exists(gross_delivery_path):
+                    os.remove(gross_delivery_path)
+
+            except Exception as symbol_error:
+                db.rollback()
+                error_symbols.append(company.nse_symbol)
+                print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
+                if os.path.exists(gross_delivery_path):
+                    os.remove(gross_delivery_path)
+                continue
+
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(error_symbols, "error", file_name)
+    finally:
+        db.close()
+
+
+
+def single_nse_insert_stock_delivery(
+    session,
+    company_id: int,
+    delivery_data: dict,
+    platform: str,
+):
+
+    trading_date = datetime.strptime(
+        delivery_data["mTIMESTAMP"],  "%d-%b-%Y %H:%M:%S",
+    )
+
+    previous_records = (
+        session.execute(
+            select(StockDeliveryDataset)
+            .where(
+                StockDeliveryDataset.company_id == company_id,
+                StockDeliveryDataset.platform == platform,
+                func.date(StockDeliveryDataset.trading_date) < trading_date.date(),
+            )
+            .order_by(desc(StockDeliveryDataset.trading_date))
+            .limit(4)
+        )
+        .scalars()
+        .all()
+    )
+
+    # Oldest -> Newest
+    previous_records.reverse()
+
+    window = [
+        {
+            "CH_TOT_TRADED_QTY": r.combined_traded_volume,
+            "COP_DELIV_QTY": r.combined_delivery_volume,
+            "COP_DELIV_PERC": r.combined_delivery_percent,
+        }
+        for r in previous_records
+    ]
+
+    # Add current day's data
+    window.append(delivery_data)
+
+    rolling_avg_volume = None
+    rolling_delivery_percent = None
+    insight = None
+
+    record = session.execute(
+        select(StockDeliveryDataset).where(
+            StockDeliveryDataset.company_id == company_id,
+            StockDeliveryDataset.platform == platform,
+            func.date(StockDeliveryDataset.trading_date) == trading_date.date(),
+        )
+    ).scalar_one_or_none()
+
+    if len(window) == 5:
+        total_traded = sum(x["CH_TOT_TRADED_QTY"] for x in window)
+        total_delivery = sum(x["COP_DELIV_QTY"] for x in window)
+
+        rolling_avg_volume = round(total_traded / 5, 2)
+
+        rolling_delivery_percent = (
+            round((total_delivery / total_traded) * 100, 2)
+            if total_traded
+            else None
+        )
+
+        diff = round(
+            delivery_data["COP_DELIV_PERC"] - rolling_delivery_percent,
+            2,
+        )
+
+        if diff >= 12:
+            insight = "Jump in delivery"
+        elif diff >= 5:
+            insight = "Rising delivery"
+        elif diff <= -12:
+            insight = "Drop in delivery"
+        elif diff <= -6:
+            insight = "Falling delivery"
+        else:
+            insight = "-"
+
+    if record:
+        record.combined_traded_volume = delivery_data["CH_TOT_TRADED_QTY"]
+        record.combined_delivery_volume = delivery_data["COP_DELIV_QTY"]
+        record.combined_delivery_percent = delivery_data["COP_DELIV_PERC"]
+        record.price_change_percent = None
+        record.insight = insight
+        record.combined_rolling_week_avg_volume = rolling_avg_volume
+        record.rolling_week_delivery_percent = rolling_delivery_percent
+    else:
+        record = StockDeliveryDataset(
+            company_id=company_id,
+            trading_date=delivery_data['mTIMESTAMP'],
+            combined_traded_volume=delivery_data["CH_TOT_TRADED_QTY"],
+            combined_delivery_volume=delivery_data["COP_DELIV_QTY"],
+            combined_delivery_percent=delivery_data["COP_DELIV_PERC"],
+            price_change_percent=None,
+            insight=insight,
+            combined_rolling_week_avg_volume=rolling_avg_volume,
+            rolling_week_delivery_percent=rolling_delivery_percent,
+            platform=platform,
+        )
+        session.add(record)
+
+
+def single_bse_insert_stock_delivery(
+    session,
+    company_id: int,
+    delivery_data: dict,
+    platform: str,
+):
+    trading_date = datetime.strptime(
+        delivery_data["dt_tm"], "%Y-%m-%d %H:%M:%S"
+    )
+
+    previous_records = (
+        session.execute(
+            select(StockDeliveryDataset)
+            .where(
+                StockDeliveryDataset.company_id == company_id,
+                StockDeliveryDataset.platform == platform,
+                func.date(StockDeliveryDataset.trading_date) < trading_date.date(),
+            )
+            .order_by(desc(StockDeliveryDataset.trading_date))
+            .limit(4)
+        )
+        .scalars()
+        .all()
+    )
+
+    previous_records.reverse()
+
+    window = [
+        {
+            "No_Of_Shares": r.combined_traded_volume,
+            "Delivery_Qty": r.combined_delivery_volume,
+            "Perc_Del_Qty": r.combined_delivery_percent,
+        }
+        for r in previous_records
+    ]
+
+    window.append(delivery_data)
+
+    rolling_avg_volume = None
+    rolling_delivery_percent = None
+    insight = None
+
+    record = session.execute(
+        select(StockDeliveryDataset).where(
+            StockDeliveryDataset.company_id == company_id,
+            StockDeliveryDataset.platform == platform,
+            func.date(StockDeliveryDataset.trading_date) == trading_date.date(),
+        )
+    ).scalar_one_or_none()
+
+    if len(window) == 5:
+        total_traded = sum(float(x["No_Of_Shares"]) for x in window)
+        total_delivery = sum(float(x["Delivery_Qty"]) for x in window)
+
+        rolling_avg_volume = round(total_traded / 5, 2)
+
+        rolling_delivery_percent = (
+            round((total_delivery / total_traded) * 100, 2)
+            if total_traded
+            else None
+        )
+
+        diff = round(
+            float(delivery_data["Perc_Del_Qty"]) - rolling_delivery_percent,
+            2,
+        )
+
+        if diff >= 12:
+            insight = "Jump in delivery"
+        elif diff >= 5:
+            insight = "Rising delivery"
+        elif diff <= -12:
+            insight = "Drop in delivery"
+        elif diff <= -6:
+            insight = "Falling delivery"
+        else:
+            insight = "-"
+
+    if record:
+        record.combined_traded_volume = delivery_data["No_Of_Shares"]
+        record.combined_delivery_volume = delivery_data["Delivery_Qty"]
+        record.combined_delivery_percent = delivery_data["Perc_Del_Qty"]
+        record.price_change_percent = None
+        record.insight = insight
+        record.combined_rolling_week_avg_volume = rolling_avg_volume
+        record.rolling_week_delivery_percent = rolling_delivery_percent
+    else:
+        record = StockDeliveryDataset(
+            company_id=company_id,
+            trading_date=trading_date,
+            combined_traded_volume=delivery_data["No_Of_Shares"],
+            combined_delivery_volume=delivery_data["Delivery_Qty"],
+            combined_delivery_percent=delivery_data["Perc_Del_Qty"],
+            price_change_percent=None,
+            insight=insight,
+            combined_rolling_week_avg_volume=rolling_avg_volume,
+            rolling_week_delivery_percent=rolling_delivery_percent,
+            platform=platform,
+        )
+        session.add(record)
+
+
+GROUP_SIZE = 5
+
+@shared_task(bind=True)
+def process_delivery_batch(self, batch, file_name):
+
+    db = SessionLocalSync()
+
+    failed = []
+    new_process_symbol = []
+    try:
+        for item in batch:
+            try:
+                if item.get("nse"):
+                    single_nse_insert_stock_delivery(
+                        db,
+                        item["company_id"],
+                        item["nse"],
+                        "NSE",
+                    )
+                if item.get("bse"):
+                    single_bse_insert_stock_delivery(
+                        db,
+                        item["company_id"],
+                        item["bse"],
+                        "BSE",
+                    )
+                db.commit()
+
+            except Exception as e:
+                db.rollback()
+                failed.append(item["symbol"])
+            finally:
+                new_process_symbol.append(item["symbol"])
+
+    finally:
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", file_name)
+        count_stmt = (
+            select(func.count(distinct(CompanyStock.id)))
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+        )
+
+        total_count = db.execute(count_stmt).scalar_one()
+        total_count_from_file = update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name)
+        if total_count == total_count_from_file:
+            update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name)
+        db.close()
+
+
+async def fetch_current_day_gross_deliverables_nse_bse_stock_information_async():
+    db = SessionLocalSync()
+    try:
+        stmt = (
+                select(CompanyStock)
+                .outerjoin(
+                    KeyDetailsForCS,
+                    CompanyStock.id == KeyDetailsForCS.company_id
+                )
+                .options(selectinload(CompanyStock.details))
+            )
+        file_name = "update_daily_nse_gross_deliverables_data.json"
+        error_symbols = []
+        result = db.execute(stmt)
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
+        new_process_symbol = []
+        unprocessed_companies = []
+        payloads = []
+        for c in result.scalars():
+            if c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if len(unprocessed_companies) == 50:
+                    break
+        started_symbols = [c.nse_symbol for c in unprocessed_companies]
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
+        for company in unprocessed_companies:
+            try:
+                nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                # bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                # print(bse_company_list, nse_company_list)
+
+                if nse_company_list:
+                    symbol = nse_company_list[0].get("symbol")
+                    c_name = "-".join(nse_company_list[0].get("company_name").split())
+                    series = nse_company_list[0].get("series")
+                    metadata = await fetch_nse_metadata(symbol, c_name)
+                    marketType = metadata.get("marketType")
+                    symbol_data = await fetch_nse_symbol_data(symbol, marketType, series)
+                    equityResponse = symbol_data.get("equityResponse", [])
+                    tradeInfo = equityResponse[0].get("tradeInfo") if equityResponse else {}
+                    equityResponseMetaData = equityResponse[0].get("metaData") if equityResponse else {}
+                    priceVolumeDeliverable = {
+                        "CH_SYMBOL": symbol,
+                        "CH_SERIES": series,
+                        "mTIMESTAMP": tradeInfo.get("secwisedelposdate", None),
+                        "CH_PREVIOUS_CLS_PRICE": equityResponseMetaData.get("previousClose"),
+                        "CH_OPENING_PRICE": equityResponseMetaData.get("open"),
+                        "CH_TRADE_HIGH_PRICE": equityResponseMetaData.get("dayHigh"),
+                        "CH_TRADE_LOW_PRICE": equityResponseMetaData.get("dayLow"),
+                        "CH_LAST_TRADED_PRICE": equityResponseMetaData.get("lastPrice"),
+                        "CH_CLOSING_PRICE": tradeInfo.get("closePrice"),
+                        "VWAP": equityResponseMetaData.get("averagePrice"),
+                        "CH_TOT_TRADED_QTY": tradeInfo.get("quantitytraded"),
+                        "CH_TOT_TRADED_VAL": tradeInfo.get("totalTradedValue"),
+                        "CH_TOTAL_TRADES": None,
+                        "CH_TIMESTAMP": None,
+                        "COP_DELIV_QTY": tradeInfo.get("deliveryquantity"),
+                        "COP_DELIV_PERC": tradeInfo.get("deliveryToTradedQuantity")
+                    }
+                    # single_nse_insert_stock_delivery(db, company.id, priceVolumeDeliverable, "NSE")
+
+                    payloads.append({
+                        "company_id": company.id,
+                        "symbol": company.nse_symbol,
+                        "nse": priceVolumeDeliverable,
+                    })
+                    new_process_symbol.append(company.nse_symbol)
+
+                    if len(payloads) == GROUP_SIZE:
+                        group(
+                            process_delivery_batch.s(payloads.copy(), file_name),
+                        ).apply_async()
+                        payloads.clear()
+
+
+                # if bse_company_list:
+                #     bse_code = bse_company_list[0].get("bse_code")
+                #     c_name = bse_company_list[0].get("company_name")
+                #     security_position = await fetch_bse_security_position(bse_code)
+                #     security_position = json.loads(security_position)
+                #     dt = datetime.strptime(security_position.get("TradeDate"), "%d %b %Y |%H:%M")
+                #
+                #     formatted_tradedate = dt.strftime("%Y-%m-%d %H:%M:%S")
+                #     bsePriceVolumeDeliverable = {
+                #         "dt_tm": formatted_tradedate,
+                #         "Scrip_cd": bse_code,
+                #         "LONG_NAME": c_name,
+                #         "Delivery_Qty": parse_number(security_position.get("DeliverableQty")),
+                #         "Delivery_Val": None,
+                #         "No_Of_Shares": parse_number(security_position.get("QtyTraded")),
+                #         "Turnover": None,
+                #         "Perc_Del_Qty": parse_number(security_position.get("PcDQ_TQ")),
+                #     }
+                #     single_bse_insert_stock_delivery(db, company.id, bsePriceVolumeDeliverable, "BSE")
+                # print("------------------------------------------------------------------------------------")
+
+
+
+            except Exception as symbol_error:
+                db.rollback()
+                error_symbols.append(company.nse_symbol)
+                print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
+                continue
+
+    finally:
+        db.close()

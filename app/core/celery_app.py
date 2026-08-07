@@ -90,5 +90,9 @@ celery_app.conf.beat_schedule = {
     "fetch_stock_quarterly_result_standalone": {
         "task": "fetch_stock_quarterly_result_standalone_data",
         "schedule": crontab(minute="*/25"),
+    },
+    "fetch_nse_bse_gross_deliverables": {
+        "task": "fetch_gross_deliverables_nse_bse_stock_information",
+        "schedule": crontab(minute="*/20"),
     }
 }

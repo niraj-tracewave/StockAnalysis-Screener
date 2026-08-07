@@ -7785,3 +7785,138 @@ def transform_share_holding_pattern(periods: list[ShareHoldingPeriod]) -> dict |
         "headers": headers,
         "rows": output_rows,
     }
+
+## Gross Deliverable
+
+async def update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name):
+    if os.path.exists(file_name):
+        with open(file_name, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return set()
+
+            data = json.loads(content)
+
+            processed = data.get("processed_symbols", [])
+            current = data.get("current_processed_symbols", [])
+            error = data.get("error", [])
+
+            return set(processed) | set(current) | set(error)
+    return set()
+
+def update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name):
+    if os.path.exists(file_name):
+        with open(file_name, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return 0
+
+        data = json.loads(content)
+
+        processed = data.get("processed_symbols", [])
+        current = data.get("current_processed_symbols", [])
+        error = data.get("error", [])
+
+        total = len(set(processed) | set(current) | set(error))
+        return total
+
+    return 0
+
+def update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name):
+    if os.path.exists(file_name):
+        with open(file_name, "r") as f:
+            content = f.read().strip()
+
+        data = json.loads(content)
+
+        data["processed_symbols"] = []
+        data["current_processed_symbols"] = []
+        data["error"] = []
+
+        with open(file_name, "w") as f:
+            json.dump(data, f, indent=4)
+
+    return 0
+
+async def update_nse_bse_gross_deliverable_data_save_processed_symbol(symbols, key, file_name):
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        # remove from current
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file_name, "w") as f:
+        json.dump(data, f, indent=4)
+
+
+def sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(symbols, key, file_name):
+
+    data = {
+        "processed_symbols": [],
+        "current_processed_symbols": [],
+        "error": []
+    }
+
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, "r") as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+    if key == "current_processed_symbols":
+        data["current_processed_symbols"].extend(symbols)
+        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
+
+    elif key == "processed_symbols":
+        data["processed_symbols"].extend(symbols)
+        data["processed_symbols"] = list(set(data["processed_symbols"]))
+
+        # remove from current
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    elif key == "error":
+        data["error"].extend(symbols)
+        data["error"] = list(set(data["error"]))
+
+        current_set = set(data.get("current_processed_symbols", []))
+        current_set -= set(symbols)
+        data["current_processed_symbols"] = list(current_set)
+
+    with open(file_name, "w") as f:
+        json.dump(data, f, indent=4)
