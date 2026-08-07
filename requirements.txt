@@ -27,12 +27,14 @@ fastapi==0.124.0
 fastapi-cli==0.0.16
 fastapi-cloud-cli==0.6.0
 fastar==0.8.0
+flower==2.0.1
 frozenlist==1.8.0
 greenlet==3.3.0
 h11==0.16.0
 httpcore==1.0.9
 httptools==0.7.1
 httpx==0.28.1
+humanize==4.16.0
 hypothesis==6.151.9
 idna==3.11
 iniconfig==2.3.0
@@ -50,6 +52,7 @@ numpy==2.4.1
 packaging==25.0
 pandas==3.0.0
 pluggy==1.6.0
+prometheus_client==0.26.0
 prompt_toolkit==3.0.52
 propcache==0.4.1
 psycopg2-binary==2.9.11
@@ -83,6 +86,7 @@ soupsieve==2.8
 SQLAlchemy==2.0.44
 starlette==0.50.0
 stua==0.3
+tornado==6.5.8
 typer==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
