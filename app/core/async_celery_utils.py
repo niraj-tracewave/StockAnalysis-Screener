@@ -3781,10 +3781,10 @@ def single_bse_insert_stock_delivery(
         session.add(record)
 
 
-GROUP_SIZE = 5
+GROUP_SIZE = 15
 
 @shared_task(bind=True)
-def process_delivery_batch(self, batch, file_name):
+def process_delivery_batch(self, batch, skip_symbols, file_name):
 
     db = SessionLocalSync()
 
@@ -3817,6 +3817,7 @@ def process_delivery_batch(self, batch, file_name):
 
     finally:
         sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        failed.extend(skip_symbols)
         sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", file_name)
         count_stmt = (
             select(func.count(distinct(CompanyStock.id)))
@@ -3833,7 +3834,7 @@ def process_delivery_batch(self, batch, file_name):
         db.close()
 
 
-async def fetch_current_day_gross_deliverables_nse_bse_stock_information_async():
+async def fetch_current_day_gross_deliverables_nse_stock_information_async():
     db = SessionLocalSync()
     try:
         stmt = (
@@ -3851,18 +3852,19 @@ async def fetch_current_day_gross_deliverables_nse_bse_stock_information_async()
         new_process_symbol = []
         unprocessed_companies = []
         payloads = []
+        skip_symbols = []
         for c in result.scalars():
             if c.nse_symbol not in processed_symbols:
                 unprocessed_companies.append(c)
-                if len(unprocessed_companies) == 50:
+                if len(unprocessed_companies) == 100:
                     break
         started_symbols = [c.nse_symbol for c in unprocessed_companies]
         await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
         for company in unprocessed_companies:
             try:
                 nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-                # bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
-                # print(bse_company_list, nse_company_list)
+                if not nse_company_list:
+                    skip_symbols.append(company.nse_symbol)
 
                 if nse_company_list:
                     symbol = nse_company_list[0].get("symbol")
@@ -3892,7 +3894,6 @@ async def fetch_current_day_gross_deliverables_nse_bse_stock_information_async()
                         "COP_DELIV_QTY": tradeInfo.get("deliveryquantity"),
                         "COP_DELIV_PERC": tradeInfo.get("deliveryToTradedQuantity")
                     }
-                    # single_nse_insert_stock_delivery(db, company.id, priceVolumeDeliverable, "NSE")
 
                     payloads.append({
                         "company_id": company.id,
@@ -3903,39 +3904,112 @@ async def fetch_current_day_gross_deliverables_nse_bse_stock_information_async()
 
                     if len(payloads) == GROUP_SIZE:
                         group(
-                            process_delivery_batch.s(payloads.copy(), file_name),
+                            process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
                         ).apply_async()
                         payloads.clear()
-
-
-                # if bse_company_list:
-                #     bse_code = bse_company_list[0].get("bse_code")
-                #     c_name = bse_company_list[0].get("company_name")
-                #     security_position = await fetch_bse_security_position(bse_code)
-                #     security_position = json.loads(security_position)
-                #     dt = datetime.strptime(security_position.get("TradeDate"), "%d %b %Y |%H:%M")
-                #
-                #     formatted_tradedate = dt.strftime("%Y-%m-%d %H:%M:%S")
-                #     bsePriceVolumeDeliverable = {
-                #         "dt_tm": formatted_tradedate,
-                #         "Scrip_cd": bse_code,
-                #         "LONG_NAME": c_name,
-                #         "Delivery_Qty": parse_number(security_position.get("DeliverableQty")),
-                #         "Delivery_Val": None,
-                #         "No_Of_Shares": parse_number(security_position.get("QtyTraded")),
-                #         "Turnover": None,
-                #         "Perc_Del_Qty": parse_number(security_position.get("PcDQ_TQ")),
-                #     }
-                #     single_bse_insert_stock_delivery(db, company.id, bsePriceVolumeDeliverable, "BSE")
-                # print("------------------------------------------------------------------------------------")
-
-
+                        skip_symbols.clear()
 
             except Exception as symbol_error:
                 db.rollback()
                 error_symbols.append(company.nse_symbol)
                 print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
                 continue
+
+        if payloads:
+            group(
+                process_delivery_batch.s(
+                    payloads.copy(),skip_symbols.copy(),
+                    file_name
+                ),
+            ).apply_async()
+            payloads.clear()
+            skip_symbols.clear()
+
+    finally:
+        db.close()
+
+
+
+async def fetch_current_day_gross_deliverables_bse_stock_information_async():
+    db = SessionLocalSync()
+    try:
+        stmt = (
+                select(CompanyStock)
+                .outerjoin(
+                    KeyDetailsForCS,
+                    CompanyStock.id == KeyDetailsForCS.company_id
+                )
+                .options(selectinload(CompanyStock.details))
+            )
+        file_name = "update_daily_bse_gross_deliverables_data.json"
+        error_symbols = []
+        result = db.execute(stmt)
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
+        new_process_symbol = []
+        unprocessed_companies = []
+        payloads = []
+        skip_symbols = []
+        for c in result.scalars():
+            if c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if len(unprocessed_companies) == 100:
+                    break
+        started_symbols = [c.nse_symbol for c in unprocessed_companies]
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
+        for company in unprocessed_companies:
+            try:
+                bse_company_list = await fetch_bse_exact_symbol_data(company.nse_symbol)
+                if not bse_company_list:
+                    skip_symbols.append(company.nse_symbol)
+
+                if bse_company_list:
+                    bse_code = bse_company_list[0].get("bse_code")
+                    c_name = bse_company_list[0].get("company_name")
+                    security_position = await fetch_bse_security_position(bse_code)
+                    security_position = json.loads(security_position)
+                    dt = datetime.strptime(security_position.get("TradeDate"), "%d %b %Y |%H:%M")
+
+                    formatted_tradedate = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    bsePriceVolumeDeliverable = {
+                        "dt_tm": formatted_tradedate,
+                        "Scrip_cd": bse_code,
+                        "LONG_NAME": c_name,
+                        "Delivery_Qty": parse_number(security_position.get("DeliverableQty")),
+                        "Delivery_Val": None,
+                        "No_Of_Shares": parse_number(security_position.get("QtyTraded")),
+                        "Turnover": None,
+                        "Perc_Del_Qty": parse_number(security_position.get("PcDQ_TQ")),
+                    }
+
+                    payloads.append({
+                        "company_id": company.id,
+                        "symbol": company.nse_symbol,
+                        "bse": bsePriceVolumeDeliverable,
+                    })
+                    new_process_symbol.append(company.nse_symbol)
+
+                    if len(payloads) == GROUP_SIZE:
+                        group(
+                            process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
+                        ).apply_async()
+                        payloads.clear()
+                        skip_symbols.clear()
+
+            except Exception as symbol_error:
+                db.rollback()
+                error_symbols.append(company.nse_symbol)
+                print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
+                continue
+
+        if payloads:
+            group(
+                process_delivery_batch.s(
+                    payloads.copy(),skip_symbols.copy(),
+                    file_name
+                ),
+            ).apply_async()
+            payloads.clear()
+            skip_symbols.clear()
 
     finally:
         db.close()
