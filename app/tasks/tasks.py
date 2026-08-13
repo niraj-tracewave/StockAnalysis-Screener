@@ -14,7 +14,9 @@ from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50
     fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_data_async, \
     fetch_calculate_and_update_stock_dividend_data_async, fetch_calculate_and_update_stock_book_value_data_async, \
     fetch_calculate_and_update_stock_roce_data_async, convert_stock_quarterly_result_data_async, \
-    fetch_stock_quarterly_result_standalone_data_async, fetch_gross_deliverables_nse_bse_stock_information_async
+    fetch_stock_quarterly_result_standalone_data_async, fetch_gross_deliverables_nse_bse_stock_information_async, \
+    fetch_current_day_gross_deliverables_nse_stock_information_async, \
+    fetch_current_day_gross_deliverables_bse_stock_information_async
 from app.core.utils import run_async_task
 from app.db.postgres.sync_session import SessionLocalSync
 from app.db.redis.redis import redis_client
@@ -294,3 +296,16 @@ def fetch_stock_quarterly_result_standalone_data():
 )
 def fetch_gross_deliverables_nse_bse_stock_information():
     run_async_task(fetch_gross_deliverables_nse_bse_stock_information_async())
+
+
+@celery_app.task(
+    name="fetch_daily_gross_deliverables_nse_stock_information",
+)
+def fetch_gross_deliverables_nse_bse_stock_information():
+    run_async_task(fetch_current_day_gross_deliverables_nse_stock_information_async())
+
+@celery_app.task(
+    name="fetch_daily_gross_deliverables_bse_stock_information",
+)
+def fetch_gross_deliverables_nse_bse_stock_information():
+    run_async_task(fetch_current_day_gross_deliverables_bse_stock_information_async())

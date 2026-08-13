@@ -3781,7 +3781,7 @@ def single_bse_insert_stock_delivery(
         session.add(record)
 
 
-GROUP_SIZE = 15
+GROUP_SIZE = 20
 
 @shared_task(bind=True)
 def process_delivery_batch(self, batch, skip_symbols, file_name):
