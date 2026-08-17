@@ -7814,10 +7814,10 @@ def update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name):
         data = json.loads(content)
 
         processed = data.get("processed_symbols", [])
-        current = data.get("current_processed_symbols", [])
+        # current = data.get("current_processed_symbols", [])
         error = data.get("error", [])
 
-        total = len(set(processed) | set(current) | set(error))
+        total = len(set(processed) | set(error))
         return total
 
     return 0
