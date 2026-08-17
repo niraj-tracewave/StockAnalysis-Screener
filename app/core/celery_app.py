@@ -35,10 +35,10 @@ celery_app.conf.beat_schedule = {
     #     "task": "fetch_30y_stock_chart_data",
     #     "schedule": crontab(hour=18, minute=8),
     # },
-    "fetch_30y_stock_chart_dat_from_nse_bse_new": {
-            "task": "fetch_and_update_30y_stock_chart_data",
-            "schedule": crontab(minute=25),
-        },
+    # "fetch_30y_stock_chart_dat_from_nse_bse_new": {
+    #         "task": "fetch_and_update_30y_stock_chart_data",
+    #         "schedule": crontab(minute=25),
+    #     },
     "fetch_quarterly_result_data_from_nse_bse": {
         "task": "fetch_quarterly_result_data",
         "schedule": crontab(minute=55),
@@ -101,6 +101,10 @@ celery_app.conf.beat_schedule = {
     },
     "fetch_nse_gross_deliverables": {
         "task": "fetch_daily_gross_deliverables_nse_stock_information",
+        "schedule": crontab(minute="*/15"),
+    },
+    "fetch_30y_stock_chart_dat_from_nse_bse_stock": {
+        "task": "fetch_and_update_basic_and_30y_stock_chart_data",
         "schedule": crontab(minute="*/15"),
     }
 }

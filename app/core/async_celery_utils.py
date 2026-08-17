@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from itertools import islice
 from zoneinfo import ZoneInfo
-
+import yfinance as yf
 import pytz
 from bs4 import BeautifulSoup
 from celery import group, shared_task
@@ -603,6 +603,8 @@ async def fetch_30y_stock_chart_data_async():
 
     db.close()
 
+
+# fetch stock chart data
 async def fetch_and_update_30y_stock_chart_data_async():
     db = SessionLocalSync()
 
@@ -4004,6 +4006,180 @@ async def fetch_current_day_gross_deliverables_bse_stock_information_async():
         if payloads:
             group(
                 process_delivery_batch.s(
+                    payloads.copy(),skip_symbols.copy(),
+                    file_name
+                ),
+            ).apply_async()
+            payloads.clear()
+            skip_symbols.clear()
+
+    finally:
+        db.close()
+
+
+# fetch stock chart data
+CHART_GROUP_SIZE = 20
+
+@shared_task(bind=True)
+def process_chart_data_delivery_batch(self, chart_data_history, skip_symbols, file_name):
+
+    db = SessionLocalSync()
+
+    failed = []
+    new_process_symbol = []
+    try:
+        for item in chart_data_history:
+            try:
+                stmt = select(ChartDataset).where(
+                    ChartDataset.company_id == item.get("company_id"),
+                    ChartDataset.meta["days"].astext == "30Y"
+                )
+                exists_30y = db.scalar(stmt)
+                if exists_30y:
+                    exists_30y.values = item.get("chart_data")
+
+                stmt = select(KeyDetailsForCS).where(
+                    KeyDetailsForCS.company_id == item.get("company_id")
+                )
+
+                key_details = db.scalar(stmt)
+
+                if key_details:
+                    key_details.current_price = item.get("current_price")
+                    key_details.pe_ratio = item.get("pe_ratio")
+                    key_details.book_value = item.get("book_value")
+                    key_details.dividend_yield = item.get("dividend_yield")
+                    key_details.roe = item.get("roe")
+                    key_details.about = item.get("about")
+                    key_details.current_price = item.get("current_price")
+
+                db.commit()
+
+            except Exception as e:
+                db.rollback()
+                failed.append(item["symbol"])
+            finally:
+                new_process_symbol.append(item["symbol"])
+
+    finally:
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        failed.extend(skip_symbols)
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", file_name)
+        count_stmt = (
+            select(func.count(distinct(CompanyStock.id)))
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+        )
+
+        total_count = db.execute(count_stmt).scalar_one()
+        total_count_from_file = update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name)
+        if total_count == total_count_from_file:
+            update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name)
+        db.close()
+
+
+async def fetch_and_update_basic_and_30y_stock_chart_data_async():
+    db = SessionLocalSync()
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+        )
+        file_name = "update_daily_basic_and_30y_stock_chart_data.json"
+        result = db.execute(stmt)
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
+        unprocessed_companies = []
+        payloads = []
+        skip_symbols = []
+        for c in result.scalars():
+            if c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if len(unprocessed_companies) == 100:
+                    break
+        started_symbols = [c.nse_symbol for c in unprocessed_companies]
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols",
+                                                                          file_name)
+        for company in unprocessed_companies:
+            try:
+                nse_company_list, bse_company_list = await asyncio.gather(
+                    fetch_nse_exact_symbol_data(company.nse_symbol),
+                    fetch_bse_exact_symbol_data(company.nse_symbol),
+                )
+                if nse_company_list and bse_company_list:
+                    suffix = "NS"
+                elif bse_company_list:
+                    suffix = "BO"
+                elif nse_company_list:
+                    suffix = "NS"
+                else:
+                    skip_symbols.append(company.nse_symbol)
+                    continue
+
+                yf_ticker_data = yf.Ticker(f"{company.nse_symbol}.{suffix}")
+
+                stmt = select(ChartDataset).where(
+                            ChartDataset.company_id == company.id,
+                            ChartDataset.meta["days"].astext == "30Y"
+                        )
+
+                exists_30y = db.scalar(stmt)
+                if not exists_30y:
+                    skip_symbols.append(company.nse_symbol)
+
+                if exists_30y:
+                    stock_data = yf_ticker_data.info
+                    chart_data_history = yf_ticker_data.history(
+                        period="max",
+                        interval="1d",
+                        auto_adjust=False
+                    )
+                    chart_data = []
+
+                    for date, row in chart_data_history.iterrows():
+                        chart_data.append([
+                            int(date.timestamp() * 1000),
+                            round(float(row["Close"]), 2),
+                            "",
+                            None,
+                            None,
+                            int(row["Volume"])
+                        ])
+                    payloads.append({
+                        "company_id": company.id,
+                        "symbol": company.nse_symbol,
+                        "chart_data": chart_data,
+                        "about": stock_data.get("longBusinessSummary"),
+                        "book_value": round(stock_data.get("bookValue") or 0, 2),
+                        "dividend_yield": round(stock_data.get("dividendYield") or 0, 2),
+                        "pe_ratio": round(stock_data.get("trailingPE") or 0, 2),
+                        "roe": round((stock_data.get("returnOnEquity") or 0) * 100, 2),
+                        "current_price": round(stock_data.get("currentPrice") or 0, 2),
+                    })
+
+
+                if len(payloads) == CHART_GROUP_SIZE:
+                    group(
+                        process_chart_data_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
+                    ).apply_async()
+                    payloads.clear()
+                    skip_symbols.clear()
+
+
+            except Exception as e:
+                db.rollback()
+                print(f"\nFAILED company: {company.id} | {company.name}")
+                print("Error:", str(e))
+                continue
+
+        if payloads:
+            group(
+                process_chart_data_delivery_batch.s(
                     payloads.copy(),skip_symbols.copy(),
                     file_name
                 ),
