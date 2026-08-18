@@ -144,6 +144,12 @@ class CompanyStock(Base):
         cascade="all, delete-orphan",
     )
 
+    market_deals = relationship(
+        "MarketDeal",
+        back_populates="company",
+        cascade="all, delete-orphan"
+    )
+
 
 class KeyDetailsForCS(Base):
     __tablename__ = "key_details_for_cs"
@@ -472,4 +478,72 @@ class StockDeliveryDataset(Base):
     company = relationship(
         "CompanyStock",
         back_populates="stock_delivery_data",
+    )
+
+
+class MarketDeal(Base):
+    __tablename__ = "market_deals"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    company_id = Column(
+        Integer,
+        ForeignKey("company_stock.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # BULK / BLOCK / SHORT_SELLING
+    deal_type = Column(
+        String(30),
+        nullable=False,
+        index=True
+    )
+
+    trade_date = Column(
+        Date,
+        nullable=False,
+        index=True
+    )
+
+    symbol = Column(
+        String(50),
+        nullable=True,
+        index=True
+    )
+
+    client_name = Column(
+        String(255),
+        nullable=True
+    )
+
+    buy_sell = Column(
+        String(10),
+        nullable=True
+    )
+
+    quantity = Column(
+        Integer,
+        nullable=True
+    )
+
+    price = Column(
+        Float,
+        nullable=True
+    )
+
+    value = Column(
+        Float,
+        nullable=True
+    )
+
+    exchange = Column(
+        String(10),
+        nullable=False,
+        default="NSE"
+    )
+
+    company = relationship(
+        "CompanyStock",
+        back_populates="market_deals"
     )
