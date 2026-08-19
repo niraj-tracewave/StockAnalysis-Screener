@@ -106,5 +106,17 @@ celery_app.conf.beat_schedule = {
     "fetch_30y_stock_chart_dat_from_nse_bse_stock": {
         "task": "fetch_and_update_basic_and_30y_stock_chart_data",
         "schedule": crontab(minute="*/15"),
+    },
+    "fetch_daily_short_selling": {
+        "task": "fetch_daily_short_selling_data",
+        "schedule": crontab(minute=0)
+    },
+    "fetch_daily_bulk_deal": {
+        "task": "fetch_daily_bulk_deal_data",
+        "schedule": crontab(minute=0)
+    },
+    "fetch_daily_block_deal": {
+        "task": "fetch_daily_block_deal_data",
+        "schedule": crontab(minute=0)
     }
 }

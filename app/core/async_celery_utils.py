@@ -12,6 +12,7 @@ import pytz
 from bs4 import BeautifulSoup
 from celery import group, shared_task
 from dateutil.relativedelta import relativedelta
+from pandas.tseries.offsets import BDay
 from sqlalchemy import select, or_, delete, and_, exists, desc, func, distinct, insert
 from sqlalchemy.orm import selectinload
 
@@ -4387,6 +4388,185 @@ async def fetch_past_block_deal_async():
         db.close()
 
 
+@shared_task(bind=True)
+def process_daily_block_deal_batch(self, block_deals):
+    db = SessionLocalSync()
+
+    try:
+        market_deals = []
+
+        for item in block_deals:
+            try:
+                company_id = item.get("company_id")
+
+                if not company_id:
+                    continue
+
+                trade_date = datetime.strptime(
+                    item.get("Date ", "").strip(),
+                    "%d-%b-%Y"
+                ).date()
+
+                symbol = (
+                    item.get("Symbol ", "") or ""
+                ).strip()
+
+                client_name = (
+                    item.get("Client Name ", "") or ""
+                ).strip()
+
+                buy_sell = (
+                    item.get("Buy / Sell ", "") or ""
+                ).strip().upper()
+
+                quantity_raw = (
+                    item.get("Quantity Traded ", "") or ""
+                )
+
+                quantity = (
+                    int(
+                        str(quantity_raw)
+                        .replace(",", "")
+                        .strip()
+                    )
+                    if quantity_raw
+                    else None
+                )
+
+                price_raw = (
+                    item.get(
+                        "Trade Price / Wght. Avg. Price ",
+                        ""
+                    ) or ""
+                )
+
+                price = (
+                    float(
+                        str(price_raw)
+                        .replace(",", "")
+                        .strip()
+                    )
+                    if price_raw
+                    else None
+                )
+
+                # Check duplicate
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "BLOCK",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.buy_sell == buy_sell,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.price == price,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
+
+                market_deals.append({
+                    "company_id": company_id,
+                    "deal_type": "BLOCK",
+                    "trade_date": trade_date,
+                    "symbol": symbol,
+                    "client_name": client_name,
+                    "buy_sell": buy_sell,
+                    "quantity": quantity,
+                    "price": price,
+                    "value": None,
+                    "exchange": "NSE",
+                })
+
+            except Exception as e:
+                print(
+                    f"Failed block deal: {item} | Error: {e}"
+                )
+
+        if market_deals:
+            db.execute(
+                insert(MarketDeal),
+                market_deals
+            )
+            db.commit()
+
+        print(
+            f"Inserted {len(market_deals)} new block deals"
+        )
+
+        return {
+            "inserted": len(market_deals)
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+async def fetch_daily_block_deal_async():
+    db = SessionLocalSync()
+    try:
+        companies = (
+            db.query(CompanyStock.id, CompanyStock.nse_symbol)
+            .filter(CompanyStock.nse_symbol.isnot(None))
+            .all()
+        )
+
+        company_map = {
+            symbol.strip().upper(): company_id
+            for company_id, symbol in companies
+            if symbol
+        }
+
+        today = bdate.today().strftime("%d-%m-%Y")
+        one_day_behind = (bdate.today() - BDay(1)).strftime("%d-%m-%Y")
+
+        all_block_deals = []
+        block_deals = await main_block_deals({
+            "optionType": "block_deals",
+            "from": one_day_behind,
+            "to": today,
+            "csv": "true",
+        })
+
+        if block_deals:
+            for deal in block_deals:
+                symbol = (
+                        deal.get("Symbol")
+                        or deal.get("Symbol ")
+                        or ""
+                ).strip().upper()
+
+                company_id = company_map.get(symbol)
+
+                deal["company_id"] = company_id
+
+                all_block_deals.append(deal)
+
+
+            if all_block_deals:
+                for i in range(0, len(all_block_deals), BULK_BLOCK_DEAL_GROUP_SIZE):
+                    batch = all_block_deals[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+
+                    print(
+                        f"Batch {i // CHART_GROUP_SIZE + 1}: "
+                        f"{len(batch)} records"
+                    )
+
+                    process_daily_block_deal_batch.delay(
+                        batch
+                    )
+
+    finally:
+        db.close()
+
 #bulk deal
 
 @shared_task(bind=True)
@@ -4579,6 +4759,186 @@ async def fetch_past_bulk_deal_async():
         db.close()
 
 
+@shared_task(bind=True)
+def process_daily_bulk_deal_batch(self, block_deals):
+    db = SessionLocalSync()
+
+    try:
+        market_deals = []
+
+        for item in block_deals:
+            try:
+                company_id = item.get("company_id")
+
+                if not company_id:
+                    continue
+
+                trade_date = datetime.strptime(
+                    item.get("Date ", "").strip(),
+                    "%d-%b-%Y"
+                ).date()
+
+                symbol = (
+                    item.get("Symbol ", "") or ""
+                ).strip()
+
+                client_name = (
+                    item.get("Client Name ", "") or ""
+                ).strip()
+
+                buy_sell = (
+                    item.get("Buy / Sell ", "") or ""
+                ).strip().upper()
+
+                quantity_raw = (
+                    item.get("Quantity Traded ", "") or ""
+                )
+
+                quantity = (
+                    int(
+                        str(quantity_raw)
+                        .replace(",", "")
+                        .strip()
+                    )
+                    if quantity_raw
+                    else None
+                )
+
+                price_raw = (
+                    item.get(
+                        "Trade Price / Wght. Avg. Price ",
+                        ""
+                    ) or ""
+                )
+
+                price = (
+                    float(
+                        str(price_raw)
+                        .replace(",", "")
+                        .strip()
+                    )
+                    if price_raw
+                    else None
+                )
+
+                # Check duplicate
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "BULK",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.buy_sell == buy_sell,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.price == price,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
+
+                market_deals.append({
+                    "company_id": company_id,
+                    "deal_type": "BULK",
+                    "trade_date": trade_date,
+                    "symbol": symbol,
+                    "client_name": client_name,
+                    "buy_sell": buy_sell,
+                    "quantity": quantity,
+                    "price": price,
+                    "value": None,
+                    "exchange": "NSE",
+                })
+
+            except Exception as e:
+                print(
+                    f"Failed block deal: {item} | Error: {e}"
+                )
+
+        if market_deals:
+            db.execute(
+                insert(MarketDeal),
+                market_deals
+            )
+            db.commit()
+
+        print(
+            f"Inserted {len(market_deals)} new block deals"
+        )
+
+        return {
+            "inserted": len(market_deals)
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+async def fetch_daily_bulk_deal_async():
+    db = SessionLocalSync()
+    try:
+        companies = (
+            db.query(CompanyStock.id, CompanyStock.nse_symbol)
+            .filter(CompanyStock.nse_symbol.isnot(None))
+            .all()
+        )
+
+        company_map = {
+            symbol.strip().upper(): company_id
+            for company_id, symbol in companies
+            if symbol
+        }
+
+        today = bdate.today().strftime("%d-%m-%Y")
+        one_day_behind = (bdate.today() - BDay(1)).strftime("%d-%m-%Y")
+
+        all_block_deals = []
+        block_deals = await main_block_deals({
+            "optionType": "bulk_deals",
+            "from": one_day_behind,
+            "to": today,
+            "csv": "true",
+        })
+
+        if block_deals:
+            for deal in block_deals:
+                symbol = (
+                        deal.get("Symbol")
+                        or deal.get("Symbol ")
+                        or ""
+                ).strip().upper()
+
+                company_id = company_map.get(symbol)
+
+                deal["company_id"] = company_id
+
+                all_block_deals.append(deal)
+
+
+            if all_block_deals:
+                for i in range(0, len(all_block_deals), BULK_BLOCK_DEAL_GROUP_SIZE):
+                    batch = all_block_deals[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+
+                    print(
+                        f"Batch {i // CHART_GROUP_SIZE + 1}: "
+                        f"{len(batch)} records"
+                    )
+
+                    process_daily_bulk_deal_batch.delay(
+                        batch
+                    )
+
+    finally:
+        db.close()
+
+
 #short shelling
 @shared_task(bind=True)
 def process_past_short_selling_batch(self, block_deals):
@@ -4608,7 +4968,7 @@ def process_past_short_selling_batch(self, block_deals):
 
 
                 client_name = (
-                    item.get("Client Name ", "")
+                    item.get("Security Name ", "")
                     or ""
                 ).strip()
 
@@ -4747,6 +5107,170 @@ async def fetch_past_short_selling_async():
                 process_past_short_selling_batch.delay(
                     batch
                 )
+
+    finally:
+        db.close()
+
+
+@shared_task(bind=True)
+def process_daily_short_selling_batch(self, block_deals):
+    db = SessionLocalSync()
+
+    try:
+        market_deals = []
+
+        for item in block_deals:
+            try:
+                company_id = item.get("company_id")
+
+                if not company_id:
+                    continue
+
+                trade_date = datetime.strptime(
+                    item.get("Date ", "").strip(),
+                    "%d-%b-%Y"
+                ).date()
+
+                symbol = (
+                    item.get("Symbol ", "") or ""
+                ).strip()
+
+                client_name = (
+                    item.get("Security Name ", "") or ""
+                ).strip()
+
+                buy_sell = None
+
+                quantity_raw = (
+                    item.get("Quantity ", "") or ""
+                )
+
+                quantity = (
+                    int(
+                        str(quantity_raw)
+                        .replace(",", "")
+                        .strip()
+                    )
+                    if quantity_raw
+                    else None
+                )
+
+                price = None
+                value = None
+
+                # Check duplicate
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "SHORT_SELLING",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.buy_sell == buy_sell,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.price == price,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
+
+                market_deals.append({
+                    "company_id": company_id,
+                    "deal_type": "SHORT_SELLING",
+                    "trade_date": trade_date,
+                    "symbol": symbol,
+                    "client_name": client_name,
+                    "buy_sell": buy_sell,
+                    "quantity": quantity,
+                    "price": price,
+                    "value": value,
+                    "exchange": "NSE",
+                })
+
+            except Exception as e:
+                print(
+                    f"Failed block deal: {item} | Error: {e}"
+                )
+
+        if market_deals:
+            db.execute(
+                insert(MarketDeal),
+                market_deals
+            )
+            db.commit()
+
+        print(
+            f"Inserted {len(market_deals)} new block deals"
+        )
+
+        return {
+            "inserted": len(market_deals)
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+async def fetch_daily_short_selling_async():
+    db = SessionLocalSync()
+    try:
+        companies = (
+            db.query(CompanyStock.id, CompanyStock.nse_symbol)
+            .filter(CompanyStock.nse_symbol.isnot(None))
+            .all()
+        )
+
+        company_map = {
+            symbol.strip().upper(): company_id
+            for company_id, symbol in companies
+            if symbol
+        }
+
+        today = bdate.today().strftime("%d-%m-%Y")
+        one_day_behind = (bdate.today() - BDay(1)).strftime("%d-%m-%Y")
+
+        all_short_sellings = []
+        block_deals = await main_block_deals({
+            "optionType": "short_selling",
+            "from": one_day_behind,
+            "to": today,
+            "csv": "true",
+        })
+
+        if block_deals:
+            for deal in block_deals:
+                symbol = (
+                        deal.get("Symbol")
+                        or deal.get("Symbol ")
+                        or ""
+                ).strip().upper()
+
+                company_id = company_map.get(symbol)
+
+                deal["company_id"] = company_id
+
+                all_short_sellings.append(deal)
+
+
+            if all_short_sellings:
+                for i in range(0, len(all_short_sellings), BULK_BLOCK_DEAL_GROUP_SIZE):
+                    batch = all_short_sellings[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+
+                    print(
+                        f"Batch {i // CHART_GROUP_SIZE + 1}: "
+                        f"{len(batch)} records"
+                    )
+
+                    process_daily_short_selling_batch.delay(
+                        batch
+                    )
 
     finally:
         db.close()
