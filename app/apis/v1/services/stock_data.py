@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
-    QuarterlyResultDateset, ShareHoldingSection
+    QuarterlyResultDateset, ShareHoldingSection, MarketDeal
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema, \
     ProfitLossResultSchema, BalanceSheetResultSchema, CashFlowResultSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
@@ -1364,3 +1364,192 @@ class CompanyStockFetchService:
                     {"error": [str(e)]},
                     200,
                 )
+
+    @staticmethod
+    async def market_deal_list(
+            deal_type,
+            date_filter,
+            start_date,
+            end_date,
+            db
+    ):
+        try:
+            deal_type = deal_type.strip().upper()
+            date_filter = date_filter.strip().upper()
+
+            allowed_deal_types = {
+                "BULK",
+                "BLOCK",
+                "SHORT_SELLING",
+            }
+
+            allowed_date_filters = {
+                "1M",
+                "3M",
+                "6M",
+                "1Y",
+                "CUSTOM",
+            }
+
+            # -----------------------------
+            # Validate deal type
+            # -----------------------------
+            if deal_type not in allowed_deal_types:
+                raise CustomValidationError(
+                    {
+                        "deal_type": [
+                            "deal_type must be BULK, BLOCK or SHORT_SELLING"
+                        ]
+                    },
+                    200,
+                )
+
+            # -----------------------------
+            # Validate date filter
+            # -----------------------------
+            if date_filter not in allowed_date_filters:
+                raise CustomValidationError(
+                    {
+                        "date_filter": [
+                            "date_filter must be 1M, 3M, 6M, 1Y or CUSTOM"
+                        ]
+                    },
+                    200,
+                )
+            now = datetime.now()
+            today = now.today().date()
+            # -----------------------------
+            # Calculate date range
+            # -----------------------------
+            if date_filter == "1M":
+                filter_start_date = today - relativedelta(months=1)
+                filter_end_date = today
+
+            elif date_filter == "3M":
+                filter_start_date = today - relativedelta(months=3)
+                filter_end_date = today
+
+            elif date_filter == "6M":
+                filter_start_date = today - relativedelta(months=6)
+                filter_end_date = today
+
+            elif date_filter == "1Y":
+                filter_start_date = today - relativedelta(years=1)
+                filter_end_date = today
+
+            else:  # CUSTOM
+
+                if not start_date or not end_date:
+                    raise CustomValidationError(
+                        {
+                            "date": [
+                                "start_date and end_date are required "
+                                "for CUSTOM date filter"
+                            ]
+                        },
+                        200,
+                    )
+
+                if start_date > end_date:
+                    raise CustomValidationError(
+                        {
+                            "date": [
+                                "start_date cannot be greater than end_date"
+                            ]
+                        },
+                        200,
+                    )
+
+                filter_start_date = start_date
+                filter_end_date = end_date
+
+            # -----------------------------
+            # Query
+            # -----------------------------
+            stmt = (
+                select(
+                    MarketDeal.id,
+                    MarketDeal.deal_type,
+                    MarketDeal.trade_date,
+                    MarketDeal.symbol,
+                    MarketDeal.client_name,
+                    MarketDeal.buy_sell,
+                    MarketDeal.quantity,
+                    MarketDeal.price,
+                    MarketDeal.value,
+                    MarketDeal.exchange,
+
+                    CompanyStock.nse_symbol,
+                    CompanyStock.name,
+                )
+                .join(
+                    CompanyStock,
+                    MarketDeal.company_id == CompanyStock.id
+                )
+                .where(
+                    func.upper(MarketDeal.deal_type) == deal_type,
+
+                    MarketDeal.trade_date >= filter_start_date,
+                    MarketDeal.trade_date <= filter_end_date,
+                )
+                .order_by(
+                    MarketDeal.trade_date.desc(),
+                    MarketDeal.id.desc()
+                )
+            )
+
+            result = await db.execute(stmt)
+
+            response = []
+
+            for row in result:
+                (
+                    deal_id,
+                    market_deal_type,
+                    trade_date,
+                    symbol,
+                    client_name,
+                    buy_sell,
+                    quantity,
+                    price,
+                    value,
+                    exchange,
+                    nse_symbol,
+                    company_name,
+                ) = row
+
+                response.append({
+                    "market_deal_id": deal_id,
+                    "symbol": symbol or nse_symbol,
+                    "company_name": company_name,
+
+                    "deal_type": market_deal_type,
+
+                    "trade_date": (
+                        trade_date.isoformat()
+                        if trade_date
+                        else None
+                    ),
+
+                    "client_name": client_name,
+                    "buy_sell": buy_sell,
+                    "quantity": quantity,
+                    "price": price,
+                    "value": value,
+                    "exchange": exchange,
+                })
+
+            return CustomJSONResponse.custom_response(
+                message="Market deal data fetched successfully.",
+                data={
+                    "deal_type": deal_type,
+                    "date_filter": date_filter,
+                    "results": response,
+                },
+            )
+
+        except Exception as e:
+            raise CustomValidationError(
+                {"error": [str(e)]},
+                200,
+            )
