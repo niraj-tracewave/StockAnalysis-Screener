@@ -65,7 +65,8 @@ from scripts.fetch_nse_block_deal import main_block_deals
 from scripts.fetch_stock_volume_from_nse import main_fetch_volume_from_nse
 from scripts.nse_fetch_shareholder_data import main_nse_fetch_shareholding_list, \
     main_nse_fetch_shareholding_data_using_api, main_nse_fetch_shareholding_data_using_api_for_book_value
-from scripts.nse_gross_deliverables import main_nse_fetch_security_wise_historical_data
+from scripts.nse_gross_deliverables import main_nse_fetch_security_wise_historical_data, \
+    fetch_sec_bhavdata_full_data
 from scripts.nse_metadata_and_symboldata import fetch_nse_metadata, fetch_nse_symbol_data
 from scripts.nse_newly_listed_stocks import main_nse_newly_listed_stocks
 from scripts.nse_stock_price_graph import new_main_fetch_stock_price_for_graph
@@ -3456,14 +3457,19 @@ def parse_number(value):
     if value is None or value == "":
         return None
 
-    value = value.replace(",", "").strip()
+    if isinstance(value, (int, float)):
+        return value
+
+    value = str(value).replace(",", "").strip()
+    if value in ("", "-", "None", "null", "N/A", "NA"):
+        return None
 
     try:
         if "." in value:
             return float(value)
         return int(value)
     except ValueError:
-        return value
+        return None
 
 
 async def parse_nse_delivery_csv(csv_file_path):
@@ -3584,10 +3590,23 @@ def single_nse_insert_stock_delivery(
     delivery_data: dict,
     platform: str,
 ):
-
-    trading_date = datetime.strptime(
-        delivery_data["mTIMESTAMP"],  "%d-%b-%Y %H:%M:%S",
-    )
+    raw_date = delivery_data.get("mTIMESTAMP")
+    if isinstance(raw_date, datetime):
+        trading_date = raw_date
+    elif isinstance(raw_date, bdate):
+        trading_date = datetime.combine(raw_date, datetime.min.time())
+    elif isinstance(raw_date, str):
+        trading_date = None
+        for fmt in ("%d-%b-%Y %H:%M:%S", "%d-%b-%Y", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d%m%Y"):
+            try:
+                trading_date = datetime.strptime(raw_date.strip(), fmt)
+                break
+            except ValueError:
+                pass
+        if trading_date is None:
+            trading_date = datetime.now(ZoneInfo("Asia/Kolkata"))
+    else:
+        trading_date = datetime.now(ZoneInfo("Asia/Kolkata"))
 
     previous_records = (
         session.execute(
@@ -3617,7 +3636,11 @@ def single_nse_insert_stock_delivery(
     ]
 
     # Add current day's data
-    window.append(delivery_data)
+    window.append({
+        "CH_TOT_TRADED_QTY": parse_number(delivery_data.get("CH_TOT_TRADED_QTY")),
+        "COP_DELIV_QTY": parse_number(delivery_data.get("COP_DELIV_QTY")),
+        "COP_DELIV_PERC": parse_number(delivery_data.get("COP_DELIV_PERC")),
+    })
 
     rolling_avg_volume = None
     rolling_delivery_percent = None
@@ -3631,9 +3654,11 @@ def single_nse_insert_stock_delivery(
         )
     ).scalar_one_or_none()
 
+    current_deliv_perc = parse_number(delivery_data.get("COP_DELIV_PERC"))
+
     if len(window) == 5:
-        total_traded = sum(x["CH_TOT_TRADED_QTY"] for x in window)
-        total_delivery = sum(x["COP_DELIV_QTY"] for x in window)
+        total_traded = sum(float(x["CH_TOT_TRADED_QTY"]) for x in window if x.get("CH_TOT_TRADED_QTY") is not None)
+        total_delivery = sum(float(x["COP_DELIV_QTY"]) for x in window if x.get("COP_DELIV_QTY") is not None)
 
         rolling_avg_volume = round(total_traded / 5, 2)
 
@@ -3643,38 +3668,51 @@ def single_nse_insert_stock_delivery(
             else None
         )
 
-        diff = round(
-            delivery_data["COP_DELIV_PERC"] - rolling_delivery_percent,
+        if rolling_delivery_percent is not None and current_deliv_perc is not None:
+            diff = round(
+                current_deliv_perc - rolling_delivery_percent,
+                2,
+            )
+
+            if diff >= 12:
+                insight = "Jump in delivery"
+            elif diff >= 5:
+                insight = "Rising delivery"
+            elif diff <= -12:
+                insight = "Drop in delivery"
+            elif diff <= -6:
+                insight = "Falling delivery"
+            else:
+                insight = "-"
+
+    previous_close = parse_number(delivery_data.get("CH_PREVIOUS_CLS_PRICE"))
+    close_price = parse_number(delivery_data.get("CH_CLOSING_PRICE"))
+    price_change = None
+    if previous_close and close_price:
+        price_change = round(
+            ((close_price - previous_close) / previous_close) * 100,
             2,
         )
 
-        if diff >= 12:
-            insight = "Jump in delivery"
-        elif diff >= 5:
-            insight = "Rising delivery"
-        elif diff <= -12:
-            insight = "Drop in delivery"
-        elif diff <= -6:
-            insight = "Falling delivery"
-        else:
-            insight = "-"
+    tot_traded_qty = parse_number(delivery_data.get("CH_TOT_TRADED_QTY"))
+    deliv_qty = parse_number(delivery_data.get("COP_DELIV_QTY"))
 
     if record:
-        record.combined_traded_volume = delivery_data["CH_TOT_TRADED_QTY"]
-        record.combined_delivery_volume = delivery_data["COP_DELIV_QTY"]
-        record.combined_delivery_percent = delivery_data["COP_DELIV_PERC"]
-        record.price_change_percent = None
+        record.combined_traded_volume = tot_traded_qty
+        record.combined_delivery_volume = deliv_qty
+        record.combined_delivery_percent = current_deliv_perc
+        record.price_change_percent = price_change
         record.insight = insight
         record.combined_rolling_week_avg_volume = rolling_avg_volume
         record.rolling_week_delivery_percent = rolling_delivery_percent
     else:
         record = StockDeliveryDataset(
             company_id=company_id,
-            trading_date=delivery_data['mTIMESTAMP'],
-            combined_traded_volume=delivery_data["CH_TOT_TRADED_QTY"],
-            combined_delivery_volume=delivery_data["COP_DELIV_QTY"],
-            combined_delivery_percent=delivery_data["COP_DELIV_PERC"],
-            price_change_percent=None,
+            trading_date=trading_date,
+            combined_traded_volume=tot_traded_qty,
+            combined_delivery_volume=deliv_qty,
+            combined_delivery_percent=current_deliv_perc,
+            price_change_percent=price_change,
             insight=insight,
             combined_rolling_week_avg_volume=rolling_avg_volume,
             rolling_week_delivery_percent=rolling_delivery_percent,
@@ -3838,18 +3876,32 @@ def process_delivery_batch(self, batch, skip_symbols, file_name):
         db.close()
 
 
-async def fetch_current_day_gross_deliverables_nse_stock_information_async():
+async def fetch_current_day_gross_deliverables_nse_stock_information_async(date_str: str | None = None):
+    """
+    Fetch current day gross deliverable stock information from NSE bhavdata CSV:
+    https://nsearchives.nseindia.com//products/content/sec_bhavdata_full_{DDMMYYYY}.csv
+    where date_str is dynamic and defaults to the current day in IST (DDMMYYYY).
+    """
+    if not date_str:
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        date_str = now_ist.strftime("%d%m%Y")
+
+    bhavdata_map = await fetch_sec_bhavdata_full_data(date_str=date_str)
+    if not bhavdata_map:
+        print(f"No bhavdata found for date {date_str}. File may not be published yet or today is a market holiday.")
+        return
+
     db = SessionLocalSync()
+    file_name = "update_daily_nse_gross_deliverables_data.json"
     try:
         stmt = (
-                select(CompanyStock)
-                .outerjoin(
-                    KeyDetailsForCS,
-                    CompanyStock.id == KeyDetailsForCS.company_id
-                )
-                .options(selectinload(CompanyStock.details))
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
             )
-        file_name = "update_daily_nse_gross_deliverables_data.json"
+            .options(selectinload(CompanyStock.details))
+        )
         error_symbols = []
         result = db.execute(stmt)
         processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
@@ -3862,67 +3914,64 @@ async def fetch_current_day_gross_deliverables_nse_stock_information_async():
                 unprocessed_companies.append(c)
                 if len(unprocessed_companies) == 100:
                     break
+
+        if not unprocessed_companies:
+            print("All companies are already processed.")
+            return
+
         started_symbols = [c.nse_symbol for c in unprocessed_companies]
         await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", file_name)
+
         for company in unprocessed_companies:
             try:
-                nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-                if not nse_company_list:
+                row = bhavdata_map.get(company.nse_symbol)
+                if not row:
                     skip_symbols.append(company.nse_symbol)
+                    continue
 
-                if nse_company_list:
-                    symbol = nse_company_list[0].get("symbol")
-                    c_name = "-".join(nse_company_list[0].get("company_name").split())
-                    series = nse_company_list[0].get("series")
-                    metadata = await fetch_nse_metadata(symbol, c_name)
-                    marketType = metadata.get("marketType")
-                    symbol_data = await fetch_nse_symbol_data(symbol, marketType, series)
-                    equityResponse = symbol_data.get("equityResponse", [])
-                    tradeInfo = equityResponse[0].get("tradeInfo") if equityResponse else {}
-                    equityResponseMetaData = equityResponse[0].get("metaData") if equityResponse else {}
-                    priceVolumeDeliverable = {
-                        "CH_SYMBOL": symbol,
-                        "CH_SERIES": series,
-                        "mTIMESTAMP": tradeInfo.get("secwisedelposdate", None),
-                        "CH_PREVIOUS_CLS_PRICE": equityResponseMetaData.get("previousClose"),
-                        "CH_OPENING_PRICE": equityResponseMetaData.get("open"),
-                        "CH_TRADE_HIGH_PRICE": equityResponseMetaData.get("dayHigh"),
-                        "CH_TRADE_LOW_PRICE": equityResponseMetaData.get("dayLow"),
-                        "CH_LAST_TRADED_PRICE": equityResponseMetaData.get("lastPrice"),
-                        "CH_CLOSING_PRICE": tradeInfo.get("closePrice"),
-                        "VWAP": equityResponseMetaData.get("averagePrice"),
-                        "CH_TOT_TRADED_QTY": tradeInfo.get("quantitytraded"),
-                        "CH_TOT_TRADED_VAL": tradeInfo.get("totalTradedValue"),
-                        "CH_TOTAL_TRADES": None,
-                        "CH_TIMESTAMP": None,
-                        "COP_DELIV_QTY": tradeInfo.get("deliveryquantity"),
-                        "COP_DELIV_PERC": tradeInfo.get("deliveryToTradedQuantity")
-                    }
+                trade_date_str = row.get("DATE1")
+                priceVolumeDeliverable = {
+                    "CH_SYMBOL": row.get("SYMBOL"),
+                    "CH_SERIES": row.get("SERIES"),
+                    "mTIMESTAMP": trade_date_str,
+                    "CH_PREVIOUS_CLS_PRICE": parse_number(row.get("PREV_CLOSE")),
+                    "CH_OPENING_PRICE": parse_number(row.get("OPEN_PRICE")),
+                    "CH_TRADE_HIGH_PRICE": parse_number(row.get("HIGH_PRICE")),
+                    "CH_TRADE_LOW_PRICE": parse_number(row.get("LOW_PRICE")),
+                    "CH_LAST_TRADED_PRICE": parse_number(row.get("LAST_PRICE")),
+                    "CH_CLOSING_PRICE": parse_number(row.get("CLOSE_PRICE")),
+                    "VWAP": parse_number(row.get("AVG_PRICE")),
+                    "CH_TOT_TRADED_QTY": parse_number(row.get("TTL_TRD_QNTY")),
+                    "CH_TOT_TRADED_VAL": parse_number(row.get("TURNOVER_LACS")),
+                    "CH_TOTAL_TRADES": parse_number(row.get("NO_OF_TRADES")),
+                    "CH_TIMESTAMP": None,
+                    "COP_DELIV_QTY": parse_number(row.get("DELIV_QTY")),
+                    "COP_DELIV_PERC": parse_number(row.get("DELIV_PER")),
+                }
 
-                    payloads.append({
-                        "company_id": company.id,
-                        "symbol": company.nse_symbol,
-                        "nse": priceVolumeDeliverable,
-                    })
-                    new_process_symbol.append(company.nse_symbol)
+                payloads.append({
+                    "company_id": company.id,
+                    "symbol": company.nse_symbol,
+                    "nse": priceVolumeDeliverable,
+                })
+                new_process_symbol.append(company.nse_symbol)
 
-                    if len(payloads) == GROUP_SIZE:
-                        group(
-                            process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
-                        ).apply_async()
-                        payloads.clear()
-                        skip_symbols.clear()
+                if len(payloads) == GROUP_SIZE:
+                    group(
+                        process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
+                    ).apply_async()
+                    payloads.clear()
+                    skip_symbols.clear()
 
             except Exception as symbol_error:
-                db.rollback()
                 error_symbols.append(company.nse_symbol)
                 print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
                 continue
 
-        if payloads:
+        if payloads or skip_symbols:
             group(
                 process_delivery_batch.s(
-                    payloads.copy(),skip_symbols.copy(),
+                    payloads.copy(), skip_symbols.copy(),
                     file_name
                 ),
             ).apply_async()

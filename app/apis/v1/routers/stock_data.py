@@ -1,4 +1,5 @@
-from typing import List
+from datetime import date
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -99,3 +100,28 @@ async def search_company(db: Session = Depends(get_db)):
 async def search_company( sectors: List[str] = Query(...),
     db: Session = Depends(get_db),):
     return await CompanyStockFetchService.sector_vise_stock_list(sectors, db)
+
+@router.get(
+    "/block-bulk-short-selling/",
+    status_code=status.HTTP_200_OK
+)
+async def block_bulk_short_selling(
+    deal_type: str = Query(...),  # BULK / BLOCK / SHORT_SELLING
+
+    date_filter: str = Query(
+        "1M",
+        description="1M, 3M, 6M, 1Y, CUSTOM"
+    ),
+
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+
+    db: Session = Depends(get_db),
+):
+    return await CompanyStockFetchService.market_deal_list(
+        deal_type=deal_type,
+        date_filter=date_filter,
+        start_date=start_date,
+        end_date=end_date,
+        db=db,
+    )
