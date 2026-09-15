@@ -4068,6 +4068,157 @@ async def fetch_current_day_gross_deliverables_bse_stock_information_async():
         db.close()
 
 
+@shared_task(bind=True)
+def nse_process_delivery_batch(self, batch, skip_symbols, file_name):
+
+    db = SessionLocalSync()
+
+    failed = []
+    new_process_symbol = []
+    try:
+        for item in batch:
+            try:
+                if item.get("nse"):
+                    single_nse_insert_stock_delivery(
+                        db,
+                        item["company_id"],
+                        item["nse"],
+                        "NSE",
+                    )
+                if item.get("bse"):
+                    single_bse_insert_stock_delivery(
+                        db,
+                        item["company_id"],
+                        item["bse"],
+                        "BSE",
+                    )
+                db.commit()
+                new_process_symbol.append(item["symbol"])
+
+            except Exception as e:
+                db.rollback()
+                failed.append(item["symbol"])
+
+    finally:
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        failed.extend(skip_symbols)
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", file_name)
+        count_stmt = (
+            select(func.count(distinct(CompanyStock.id)))
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+        )
+
+        total_count = db.execute(count_stmt).scalar_one()
+        total_count_from_file = update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name)
+        if total_count == total_count_from_file:
+            update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name)
+        db.close()
+
+async def hourly_fetch_current_day_gross_deliverables_nse_stock_information_async():
+    db = SessionLocalSync()
+    try:
+        stmt = (
+            select(CompanyStock)
+            .outerjoin(
+                KeyDetailsForCS,
+                CompanyStock.id == KeyDetailsForCS.company_id
+            )
+            .options(selectinload(CompanyStock.details))
+        )
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        date_str = now_ist.strftime("%Y%m%d")
+        redis_target = f"redis:hourly_nse_gross_deliverables:{date_str}"
+
+        error_symbols = []
+        result = db.execute(stmt)
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(redis_target))
+        new_process_symbol = []
+        unprocessed_companies = []
+        payloads = []
+        skip_symbols = []
+        for c in result.scalars():
+            if c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if len(unprocessed_companies) == 100:
+                    break
+
+        if not unprocessed_companies:
+            print(f"All NSE symbols have already been processed for date {date_str}.")
+            return
+
+        started_symbols = [c.nse_symbol for c in unprocessed_companies]
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", redis_target)
+        for company in unprocessed_companies:
+            try:
+                nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
+                if not nse_company_list:
+                    skip_symbols.append(company.nse_symbol)
+
+                if nse_company_list:
+                    symbol = nse_company_list[0].get("symbol")
+                    c_name = "-".join(nse_company_list[0].get("company_name").split())
+                    series = nse_company_list[0].get("series")
+                    metadata = await fetch_nse_metadata(symbol, c_name)
+                    marketType = metadata.get("marketType")
+                    symbol_data = await fetch_nse_symbol_data(symbol, marketType, series)
+                    equityResponse = symbol_data.get("equityResponse", [])
+                    tradeInfo = equityResponse[0].get("tradeInfo") if equityResponse else {}
+                    equityResponseMetaData = equityResponse[0].get("metaData") if equityResponse else {}
+                    priceVolumeDeliverable = {
+                        "CH_SYMBOL": symbol,
+                        "CH_SERIES": series,
+                        "mTIMESTAMP": tradeInfo.get("secwisedelposdate", None),
+                        "CH_PREVIOUS_CLS_PRICE": equityResponseMetaData.get("previousClose"),
+                        "CH_OPENING_PRICE": equityResponseMetaData.get("open"),
+                        "CH_TRADE_HIGH_PRICE": equityResponseMetaData.get("dayHigh"),
+                        "CH_TRADE_LOW_PRICE": equityResponseMetaData.get("dayLow"),
+                        "CH_LAST_TRADED_PRICE": equityResponseMetaData.get("lastPrice"),
+                        "CH_CLOSING_PRICE": tradeInfo.get("closePrice"),
+                        "VWAP": equityResponseMetaData.get("averagePrice"),
+                        "CH_TOT_TRADED_QTY": tradeInfo.get("quantitytraded"),
+                        "CH_TOT_TRADED_VAL": tradeInfo.get("totalTradedValue"),
+                        "CH_TOTAL_TRADES": None,
+                        "CH_TIMESTAMP": None,
+                        "COP_DELIV_QTY": tradeInfo.get("deliveryquantity"),
+                        "COP_DELIV_PERC": tradeInfo.get("deliveryToTradedQuantity")
+                    }
+
+                    payloads.append({
+                        "company_id": company.id,
+                        "symbol": company.nse_symbol,
+                        "nse": priceVolumeDeliverable,
+                    })
+                    new_process_symbol.append(company.nse_symbol)
+
+                    if len(payloads) == GROUP_SIZE:
+                        group(
+                            nse_process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), redis_target),
+                        ).apply_async()
+                        payloads.clear()
+                        skip_symbols.clear()
+
+            except Exception as symbol_error:
+                db.rollback()
+                error_symbols.append(company.nse_symbol)
+                print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
+                continue
+
+        if payloads or skip_symbols:
+            group(
+                nse_process_delivery_batch.s(
+                    payloads.copy(), skip_symbols.copy(),
+                    redis_target
+                ),
+            ).apply_async()
+            payloads.clear()
+            skip_symbols.clear()
+
+    finally:
+        db.close()
+
 # fetch stock chart data
 CHART_GROUP_SIZE = 20
 

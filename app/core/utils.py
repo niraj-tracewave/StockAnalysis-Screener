@@ -3,7 +3,7 @@ import os
 import re
 import unicodedata
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import aiohttp
@@ -7788,7 +7788,30 @@ def transform_share_holding_pattern(periods: list[ShareHoldingPeriod]) -> dict |
 
 ## Gross Deliverable
 
+def is_redis_deliverable_target(target: str) -> bool:
+    if not isinstance(target, str):
+        return False
+    return target.startswith("redis:") or not target.endswith(".json")
+
+def get_seconds_until_midnight_ist() -> int:
+    from zoneinfo import ZoneInfo
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    midnight_ist = (now_ist + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(int((midnight_ist - now_ist).total_seconds()), 60)
+
 async def update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name):
+    if is_redis_deliverable_target(file_name):
+        try:
+            from app.db.redis.redis import redis_client_1
+            prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            processed = redis_client_1.smembers(f"{prefix}:processed_symbols") or set()
+            current = redis_client_1.smembers(f"{prefix}:current_processed_symbols") or set()
+            error = redis_client_1.smembers(f"{prefix}:error") or set()
+            return set(processed) | set(current) | set(error)
+        except Exception as e:
+            print(f"Error loading deliverable symbols from Redis: {e}")
+            return set()
+
     if os.path.exists(file_name):
         with open(file_name, "r") as f:
             content = f.read().strip()
@@ -7805,6 +7828,17 @@ async def update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name
     return set()
 
 def update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name):
+    if is_redis_deliverable_target(file_name):
+        try:
+            from app.db.redis.redis import redis_client_1
+            prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            processed = redis_client_1.smembers(f"{prefix}:processed_symbols") or set()
+            error = redis_client_1.smembers(f"{prefix}:error") or set()
+            return len(set(processed) | set(error))
+        except Exception as e:
+            print(f"Error counting deliverable symbols in Redis: {e}")
+            return 0
+
     if os.path.exists(file_name):
         with open(file_name, "r") as f:
             content = f.read().strip()
@@ -7823,6 +7857,19 @@ def update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name):
     return 0
 
 def update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name):
+    if is_redis_deliverable_target(file_name):
+        try:
+            from app.db.redis.redis import redis_client_1
+            prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            redis_client_1.delete(
+                f"{prefix}:processed_symbols",
+                f"{prefix}:current_processed_symbols",
+                f"{prefix}:error"
+            )
+        except Exception as e:
+            print(f"Error resetting deliverable keys in Redis: {e}")
+        return 0
+
     if os.path.exists(file_name):
         with open(file_name, "r") as f:
             content = f.read().strip()
@@ -7839,6 +7886,35 @@ def update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name):
     return 0
 
 async def update_nse_bse_gross_deliverable_data_save_processed_symbol(symbols, key, file_name):
+    if is_redis_deliverable_target(file_name):
+        if not symbols:
+            return
+        try:
+            from app.db.redis.redis import redis_client_1
+            prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            ttl = get_seconds_until_midnight_ist()
+            current_key = f"{prefix}:current_processed_symbols"
+
+            if key == "current_processed_symbols":
+                redis_client_1.sadd(current_key, *symbols)
+                redis_client_1.expire(current_key, ttl)
+
+            elif key == "processed_symbols":
+                proc_key = f"{prefix}:processed_symbols"
+                redis_client_1.sadd(proc_key, *symbols)
+                redis_client_1.expire(proc_key, ttl)
+                # Remove/delete processed symbols from current_processed_symbols
+                redis_client_1.srem(current_key, *symbols)
+
+            elif key == "error":
+                err_key = f"{prefix}:error"
+                redis_client_1.sadd(err_key, *symbols)
+                redis_client_1.expire(err_key, ttl)
+                # Remove/delete error symbols from current_processed_symbols
+                redis_client_1.srem(current_key, *symbols)
+        except Exception as e:
+            print(f"Error saving deliverable symbols to Redis: {e}")
+        return
 
     data = {
         "processed_symbols": [],
@@ -7881,6 +7957,35 @@ async def update_nse_bse_gross_deliverable_data_save_processed_symbol(symbols, k
 
 
 def sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(symbols, key, file_name):
+    if is_redis_deliverable_target(file_name):
+        if not symbols:
+            return
+        try:
+            from app.db.redis.redis import redis_client_1
+            prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            ttl = get_seconds_until_midnight_ist()
+            current_key = f"{prefix}:current_processed_symbols"
+
+            if key == "current_processed_symbols":
+                redis_client_1.sadd(current_key, *symbols)
+                redis_client_1.expire(current_key, ttl)
+
+            elif key == "processed_symbols":
+                proc_key = f"{prefix}:processed_symbols"
+                redis_client_1.sadd(proc_key, *symbols)
+                redis_client_1.expire(proc_key, ttl)
+                # Remove/delete processed symbols from current_processed_symbols
+                redis_client_1.srem(current_key, *symbols)
+
+            elif key == "error":
+                err_key = f"{prefix}:error"
+                redis_client_1.sadd(err_key, *symbols)
+                redis_client_1.expire(err_key, ttl)
+                # Remove/delete error symbols from current_processed_symbols
+                redis_client_1.srem(current_key, *symbols)
+        except Exception as e:
+            print(f"Error syncing deliverable symbols to Redis: {e}")
+        return
 
     data = {
         "processed_symbols": [],
