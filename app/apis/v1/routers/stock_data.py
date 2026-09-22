@@ -125,3 +125,22 @@ async def block_bulk_short_selling(
         end_date=end_date,
         db=db,
     )
+
+@router.get(
+    "/company-stock-delivery/{company_id}/",
+    status_code=status.HTTP_200_OK
+)
+async def get_company_stock_delivery(
+    company_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1),
+    platform: Optional[str] = Query(None, description="Optional platform filter: NSE or BSE"),
+    db: Session = Depends(get_db),
+):
+    return await CompanyStockFetchService.fetch_company_stock_delivery(
+        company_id=company_id,
+        page=page,
+        page_size=page_size,
+        platform=platform,
+        db=db,
+    )

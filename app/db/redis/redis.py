@@ -6,3 +6,11 @@ redis_client = redis.Redis(
     db=0,
     decode_responses=True
 )
+
+
+redis_client_1 = redis.Redis(
+    host="localhost",
+    port=6379,
+    db=10,
+    decode_responses=True
+)

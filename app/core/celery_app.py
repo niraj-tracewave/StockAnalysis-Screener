@@ -103,6 +103,10 @@ celery_app.conf.beat_schedule = {
         "task": "fetch_daily_gross_deliverables_nse_stock_information",
         "schedule": crontab(minute="*/15"),
     },
+    # "daily_gross_deliverables_nse_stock": {
+    #     "task" : "daily_gross_deliverables_nse_stock_information",
+    #     "schedule": crontab(minute="*/15"),
+    # },
     "fetch_30y_stock_chart_dat_from_nse_bse_stock": {
         "task": "fetch_and_update_basic_and_30y_stock_chart_data",
         "schedule": crontab(minute="*/15"),

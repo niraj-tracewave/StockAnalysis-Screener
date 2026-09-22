@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
-    QuarterlyResultDateset, ShareHoldingSection, MarketDeal
+    QuarterlyResultDateset, ShareHoldingSection, MarketDeal, StockDeliveryDataset
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema, \
     ProfitLossResultSchema, BalanceSheetResultSchema, CashFlowResultSchema
 from app.core.constants import quarterly_result, profit_loss, balance_sheet, cash_flow, ratios, share_holding_pattern, \
@@ -1548,6 +1548,91 @@ class CompanyStockFetchService:
                 },
             )
 
+        except Exception as e:
+            raise CustomValidationError(
+                {"error": [str(e)]},
+                200,
+            )
+
+    @staticmethod
+    async def fetch_company_stock_delivery(
+        company_id: int,
+        page: int = 1,
+        page_size: int = 10,
+        platform: str | None = None,
+        db: Session = Depends(get_db),
+    ):
+        try:
+            company_stmt = select(CompanyStock).where(CompanyStock.id == company_id)
+            company_result = await db.execute(company_stmt)
+            company = company_result.scalars().first()
+
+            if not company:
+                raise CustomValidationError(
+                    {"company_id": ["Company not found."]},
+                    200,
+                )
+
+            offset = (page - 1) * page_size
+
+            conditions = [StockDeliveryDataset.company_id == company_id]
+            if platform:
+                conditions.append(func.upper(StockDeliveryDataset.platform) == platform.strip().upper())
+
+            total_stmt = select(func.count(StockDeliveryDataset.id)).where(*conditions)
+            total_result = await db.execute(total_stmt)
+            total = total_result.scalar() or 0
+
+            stmt = (
+                select(StockDeliveryDataset)
+                .where(*conditions)
+                .order_by(
+                    StockDeliveryDataset.trading_date.desc().nulls_last(),
+                    StockDeliveryDataset.id.desc(),
+                )
+                .offset(offset)
+                .limit(page_size)
+            )
+
+            result = await db.execute(stmt)
+            records = result.scalars().all()
+
+            response_records = []
+            for record in records:
+                response_records.append({
+                    "id": record.id,
+                    "trading_date": (
+                        record.trading_date.isoformat()
+                        if record.trading_date
+                        else None
+                    ),
+                    "combined_traded_volume": record.combined_traded_volume,
+                    "combined_delivery_volume": record.combined_delivery_volume,
+                    "combined_delivery_percent": record.combined_delivery_percent,
+                    "price_change_percent": record.price_change_percent,
+                    "insight": record.insight,
+                    "combined_rolling_week_avg_volume": record.combined_rolling_week_avg_volume,
+                    "rolling_week_delivery_percent": record.rolling_week_delivery_percent,
+                    "platform": record.platform,
+                })
+
+            return CustomJSONResponse.custom_response(
+                message="Company stock delivery data fetched successfully.",
+                data={
+                    "company_id": company.id,
+                    "company_name": company.name,
+                    "nse_symbol": company.nse_symbol,
+                    "bse_code": company.bse_code,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_records": total,
+                    "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
+                    "records": response_records,
+                },
+            )
+
+        except CustomValidationError:
+            raise
         except Exception as e:
             raise CustomValidationError(
                 {"error": [str(e)]},

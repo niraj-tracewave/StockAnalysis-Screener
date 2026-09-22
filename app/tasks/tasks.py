@@ -18,7 +18,7 @@ from app.core.async_celery_utils import fetch_and_store_company_data_from_top_50
     fetch_current_day_gross_deliverables_nse_stock_information_async, \
     fetch_current_day_gross_deliverables_bse_stock_information_async, \
     fetch_and_update_basic_and_30y_stock_chart_data_async, fetch_daily_short_selling_async, fetch_daily_bulk_deal_async, \
-    fetch_daily_block_deal_async
+    fetch_daily_block_deal_async, hourly_fetch_current_day_gross_deliverables_nse_stock_information_async
 from app.core.utils import run_async_task
 from app.db.postgres.sync_session import SessionLocalSync
 from app.db.redis.redis import redis_client
@@ -302,6 +302,12 @@ def fetch_gross_deliverables_nse_bse_stock_information():
 
 @celery_app.task(
     name="fetch_daily_gross_deliverables_nse_stock_information",
+)
+def fetch_gross_deliverables_nse_bse_stock_information():
+    run_async_task(hourly_fetch_current_day_gross_deliverables_nse_stock_information_async())
+
+@celery_app.task(
+    name="daily_gross_deliverables_nse_stock_information",
 )
 def fetch_gross_deliverables_nse_bse_stock_information():
     run_async_task(fetch_current_day_gross_deliverables_nse_stock_information_async())
