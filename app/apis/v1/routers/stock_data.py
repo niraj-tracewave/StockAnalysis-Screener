@@ -93,13 +93,21 @@ async def search_company():
 
 
 @router.get("/sector-list/", status_code=status.HTTP_200_OK)
-async def search_company(db: Session = Depends(get_db)):
-    return await CompanyStockFetchService.sector_list(db)
+async def get_sector_list(
+    current_user: int | None = Depends(optional_get_current_user),
+    db: Session = Depends(get_db),
+    external_db: Session = Depends(get_external_db),
+):
+    return await CompanyStockFetchService.sector_list(current_user, db, external_db)
 
 @router.get("/sector-wise-stock-list/", status_code=status.HTTP_200_OK)
-async def search_company( sectors: List[str] = Query(...),
-    db: Session = Depends(get_db),):
-    return await CompanyStockFetchService.sector_vise_stock_list(sectors, db)
+async def get_sector_wise_stock_list(
+    sectors: List[str] = Query(...),
+    current_user: int | None = Depends(optional_get_current_user),
+    db: Session = Depends(get_db),
+    external_db: Session = Depends(get_external_db),
+):
+    return await CompanyStockFetchService.sector_vise_stock_list(sectors, current_user, db, external_db)
 
 @router.get(
     "/block-bulk-short-selling/",

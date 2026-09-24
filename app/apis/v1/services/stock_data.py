@@ -3,6 +3,7 @@ import json
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import List
 
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.apis.deps import get_db, get_external_db
 from app.apis.models.follow_unfollow_external_db_model import FollowUnfollowExternal
+from app.apis.models.sector_external_db_model import SectorExternal
 from app.apis.models.stock_data import CompanyStock, KeyDetailsForCS, ChartDataset, ShareHoldingPeriod, \
     QuarterlyResultDateset, ShareHoldingSection, MarketDeal, StockDeliveryDataset
 from app.apis.v1.schemas.stock_data import SearchCompanyStockSchema, QuarterlyResultSchema, UpdateStockPriceSchema, \
@@ -1280,7 +1282,11 @@ class CompanyStockFetchService:
             )
 
     @staticmethod
-    async def sector_list(db: Session = Depends(get_db)):
+    async def sector_list(
+        current_user: int | None = None,
+        db: Session = Depends(get_db),
+        external_db: Session = Depends(get_external_db),
+    ):
         try:
             normalized_sector = func.initcap(
                 func.lower(
@@ -1304,9 +1310,30 @@ class CompanyStockFetchService:
             result = await db.execute(stmt)
             sectors = result.scalars().all()
 
+            selected_sectors = set()
+            if current_user and external_db:
+                sector_stmt = select(SectorExternal.sector_name).where(
+                    SectorExternal.user_id == current_user
+                )
+                user_sectors_res = await external_db.execute(sector_stmt)
+                selected_sectors = {
+                    (name or "").strip().lower().replace(",", "")
+                    for name in user_sectors_res.scalars().all()
+                    if name
+                }
+
+            sector_data = [
+                {
+                    "sector": sector,
+                    "sector_name": sector,
+                    "is_selected": (sector.strip().lower().replace(",", "") in selected_sectors) if current_user else False,
+                }
+                for sector in sectors
+            ]
+
             return CustomJSONResponse.custom_response(
                 message="Sector list fetched successfully.",
-                data={"data": sectors}
+                data={"data": sector_data}
             )
         except Exception as e:
             raise CustomValidationError(
@@ -1314,7 +1341,12 @@ class CompanyStockFetchService:
             )
 
     @staticmethod
-    async def sector_vise_stock_list(sectors,  db):
+    async def sector_vise_stock_list(
+        sectors: List[str],
+        current_user: int | None = None,
+        db: Session = Depends(get_db),
+        external_db: Session = Depends(get_external_db),
+    ):
         try:
             normalized_sectors = [
                 sector.strip().lower().replace(",", "")
@@ -1345,13 +1377,27 @@ class CompanyStockFetchService:
 
             result = await db.execute(stmt)
 
+            followed_symbols = set()
+            if current_user and external_db:
+                follow_stmt = select(FollowUnfollowExternal.symbol).where(
+                    FollowUnfollowExternal.user_id == current_user
+                )
+                follow_result = await external_db.execute(follow_stmt)
+                followed_symbols = {
+                    (s or "").strip().upper()
+                    for s in follow_result.scalars().all()
+                    if s
+                }
+
             response = defaultdict(list)
 
             for sector, symbol, company_name in result:
                 if symbol:
+                    clean_sym = symbol.strip().upper()
                     response[sector].append({
                         "symbol": symbol,
                         "company_name": company_name,
+                        "is_selected": clean_sym in followed_symbols if current_user else False,
                     })
 
             return CustomJSONResponse.custom_response(
@@ -1360,10 +1406,10 @@ class CompanyStockFetchService:
             )
 
         except Exception as e:
-                raise CustomValidationError(
-                    {"error": [str(e)]},
-                    200,
-                )
+            raise CustomValidationError(
+                {"error": [str(e)]},
+                200,
+            )
 
     @staticmethod
     async def market_deal_list(
