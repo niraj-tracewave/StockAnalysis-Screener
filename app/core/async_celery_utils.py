@@ -4126,6 +4126,19 @@ async def fetch_current_day_gross_deliverables_bse_stock_information_async():
 
 
 async def hourly_fetch_current_day_gross_deliverables_nse_stock_information_async():
+    """
+    Fetch current day gross deliverable stock information hourly for all NSE stocks (~6000).
+    Supports both:
+    1. During Market Hours: High-concurrency live quote fetching via GetQuoteApi with session pooling.
+    2. After 6 PM: Instant Bhavdata processing if already published.
+    """
+    import aiohttp
+    from app.db.redis.redis import redis_client_1
+    from scripts.nse_metadata_and_symboldata import NSE_SYMBOL_DATA_HEADERS, NSE_SYMBOL_DATA_URL
+
+    started_symbols = []
+    new_process_symbol = []
+    redis_prefix = ""
     db = SessionLocalSync()
     try:
         stmt = (
@@ -4139,8 +4152,14 @@ async def hourly_fetch_current_day_gross_deliverables_nse_stock_information_asyn
         now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
         date_str = now_ist.strftime("%Y%m%d")
         redis_target = f"redis:hourly_nse_gross_deliverables:{date_str}"
+        redis_prefix = redis_target[6:] if redis_target.startswith("redis:") else redis_target
 
-        error_symbols = []
+        # Clear any failed/error symbols from Redis so they can be retried in this hourly cycle
+        try:
+            redis_client_1.delete(f"{redis_prefix}:error")
+        except Exception as e:
+            print(f"Error clearing redis error set: {e}")
+
         result = db.execute(stmt)
         processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(redis_target))
         new_process_symbol = []
@@ -4148,83 +4167,310 @@ async def hourly_fetch_current_day_gross_deliverables_nse_stock_information_asyn
         payloads = []
         skip_symbols = []
         for c in result.scalars():
-            if c.nse_symbol not in processed_symbols:
+            if c.nse_symbol and c.nse_symbol not in processed_symbols:
                 unprocessed_companies.append(c)
-                if len(unprocessed_companies) == 100:
-                    break
 
         if not unprocessed_companies:
             print(f"All NSE symbols have already been processed for date {date_str}.")
             return
 
         started_symbols = [c.nse_symbol for c in unprocessed_companies]
-        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols", redis_target)
-        for company in unprocessed_companies:
+        await update_nse_bse_gross_deliverable_data_save_processed_symbol(
+            started_symbols, "current_processed_symbols", redis_target
+        )
+
+        BATCH_SIZE = 50
+
+        # Step 1: Check if Bhavdata CSV is already available (e.g. after 6 PM)
+        bhavdata_date_str = now_ist.strftime("%d%m%Y")
+        bhavdata_map = await fetch_sec_bhavdata_full_data(date_str=bhavdata_date_str)
+
+        if bhavdata_map:
+            print(f"Bhavdata available for {bhavdata_date_str}. Processing {len(unprocessed_companies)} companies via bhavdata.")
+            bhav_failed = []
+            for company in unprocessed_companies:
+                row = bhavdata_map.get(company.nse_symbol)
+                if not row:
+                    bhav_failed.append(company.nse_symbol)
+                    continue
+
+                trade_date_str = row.get("DATE1")
+                priceVolumeDeliverable = {
+                    "CH_SYMBOL": row.get("SYMBOL"),
+                    "CH_SERIES": row.get("SERIES"),
+                    "mTIMESTAMP": trade_date_str,
+                    "CH_PREVIOUS_CLS_PRICE": parse_number(row.get("PREV_CLOSE")),
+                    "CH_OPENING_PRICE": parse_number(row.get("OPEN_PRICE")),
+                    "CH_TRADE_HIGH_PRICE": parse_number(row.get("HIGH_PRICE")),
+                    "CH_TRADE_LOW_PRICE": parse_number(row.get("LOW_PRICE")),
+                    "CH_LAST_TRADED_PRICE": parse_number(row.get("LAST_PRICE")),
+                    "CH_CLOSING_PRICE": parse_number(row.get("CLOSE_PRICE")),
+                    "VWAP": parse_number(row.get("AVG_PRICE")),
+                    "CH_TOT_TRADED_QTY": parse_number(row.get("TTL_TRD_QNTY")),
+                    "CH_TOT_TRADED_VAL": parse_number(row.get("TURNOVER_LACS")),
+                    "CH_TOTAL_TRADES": None,
+                    "CH_TIMESTAMP": None,
+                    "COP_DELIV_QTY": parse_number(row.get("DELIV_QTY")),
+                    "COP_DELIV_PERC": parse_number(row.get("DELIV_PER")),
+                }
+
+                payloads.append({
+                    "company_id": company.id,
+                    "symbol": company.nse_symbol,
+                    "nse": priceVolumeDeliverable,
+                })
+                new_process_symbol.append(company.nse_symbol)
+
+                if len(payloads) >= BATCH_SIZE:
+                    group(
+                        nse_process_delivery_batch.s(payloads.copy(), [], redis_target),
+                    ).apply_async()
+                    payloads.clear()
+
+            if payloads:
+                group(
+                    nse_process_delivery_batch.s(
+                        payloads.copy(), [],
+                        redis_target
+                    ),
+                ).apply_async()
+                payloads.clear()
+
+            if bhav_failed:
+                try:
+                    redis_client_1.srem(f"{redis_prefix}:current_processed_symbols", *bhav_failed)
+                    redis_client_1.srem(f"{redis_prefix}:error", *bhav_failed)
+                except Exception:
+                    pass
+
+            return
+
+        # Step 2: During market hours, Bhavdata is not published yet.
+        # Fetch live market data via NSE GetQuoteApi concurrently with session pooling
+        print(f"Bhavdata not published yet for {bhavdata_date_str} (Market Hours). Fetching live data concurrently for {len(unprocessed_companies)} companies.")
+
+        headers = {
+            **NSE_SYMBOL_DATA_HEADERS,
+            "authority": "www.nseindia.com",
+            "accept": "*/*",
+            "accept-language": "en-US,en;q=0.9",
+            "user-agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/140.0.0.0 Safari/537.36"
+            ),
+        }
+
+        semaphore = asyncio.Semaphore(20)
+        connector = aiohttp.TCPConnector(limit=50, limit_per_host=30, ttl_dns_cache=300, ssl=False)
+        timeout = aiohttp.ClientTimeout(total=15, connect=5)
+        async with aiohttp.ClientSession(headers=headers, connector=connector, timeout=timeout) as session:
+            # Initial handshake to establish valid cookies on nseindia.com
             try:
-                nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-                if not nse_company_list:
-                    skip_symbols.append(company.nse_symbol)
+                async with session.get("https://www.nseindia.com", headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as _:
+                    pass
+            except Exception as e:
+                pass
 
-                if nse_company_list:
-                    symbol = nse_company_list[0].get("symbol")
-                    c_name = "-".join(nse_company_list[0].get("company_name").split())
-                    series = nse_company_list[0].get("series")
-                    metadata = await fetch_nse_metadata(symbol, c_name)
-                    marketType = metadata.get("marketType")
-                    symbol_data = await fetch_nse_symbol_data(symbol, marketType, series)
-                    equityResponse = symbol_data.get("equityResponse", [])
-                    tradeInfo = equityResponse[0].get("tradeInfo") if equityResponse else {}
-                    equityResponseMetaData = equityResponse[0].get("metaData") if equityResponse else {}
-                    priceVolumeDeliverable = {
-                        "CH_SYMBOL": symbol,
-                        "CH_SERIES": series,
-                        "mTIMESTAMP": tradeInfo.get("secwisedelposdate", None),
-                        "CH_PREVIOUS_CLS_PRICE": equityResponseMetaData.get("previousClose"),
-                        "CH_OPENING_PRICE": equityResponseMetaData.get("open"),
-                        "CH_TRADE_HIGH_PRICE": equityResponseMetaData.get("dayHigh"),
-                        "CH_TRADE_LOW_PRICE": equityResponseMetaData.get("dayLow"),
-                        "CH_LAST_TRADED_PRICE": equityResponseMetaData.get("lastPrice"),
-                        "CH_CLOSING_PRICE": tradeInfo.get("closePrice"),
-                        "VWAP": equityResponseMetaData.get("averagePrice"),
-                        "CH_TOT_TRADED_QTY": tradeInfo.get("quantitytraded"),
-                        "CH_TOT_TRADED_VAL": tradeInfo.get("totalTradedValue"),
-                        "CH_TOTAL_TRADES": None,
-                        "CH_TIMESTAMP": None,
-                        "COP_DELIV_QTY": tradeInfo.get("deliveryquantity"),
-                        "COP_DELIV_PERC": tradeInfo.get("deliveryToTradedQuantity")
-                    }
+            # Load cached symbol metadata (exact_symbol, series, market_type) from Redis (DB 10)
+            redis_symbol_meta_key = "nse:symbol_meta"
+            try:
+                raw_cached_meta = redis_client_1.hgetall(redis_symbol_meta_key) or {}
+                cached_meta_map = {
+                    sym: json.loads(val) for sym, val in raw_cached_meta.items() if val
+                }
+            except Exception as e:
+                print(f"Error loading cached NSE symbol metadata from Redis: {e}")
+                cached_meta_map = {}
 
-                    payloads.append({
-                        "company_id": company.id,
-                        "symbol": company.nse_symbol,
-                        "nse": priceVolumeDeliverable,
-                    })
-                    new_process_symbol.append(company.nse_symbol)
+            async def fetch_single_company_live(comp):
+                symbol = comp.nse_symbol
+                async with semaphore:
+                    try:
+                        meta = cached_meta_map.get(symbol)
+                        exact_symbol = meta.get("symbol", symbol) if meta else symbol
+                        series = meta.get("series", "EQ") if meta else "EQ"
+                        market_type = meta.get("market_type", "N") if meta else "N"
 
-                    if len(payloads) == GROUP_SIZE:
-                        group(
-                            nse_process_delivery_batch.s(payloads.copy(), skip_symbols.copy(), redis_target),
-                        ).apply_async()
-                        payloads.clear()
-                        skip_symbols.clear()
+                        # 1. If not cached in Redis yet, fetch exact symbol data and metadata first
+                        if not meta:
+                            nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                            if not nse_company_list:
+                                return comp, None
 
-            except Exception as symbol_error:
-                db.rollback()
-                error_symbols.append(company.nse_symbol)
-                print(f"Error for symbol {company.nse_symbol}: {symbol_error}")
-                continue
+                            exact_symbol = nse_company_list[0].get("symbol") or symbol
+                            c_name = "-".join(nse_company_list[0].get("company_name", "").split())
+                            series = nse_company_list[0].get("series") or "EQ"
+                            metadata = await fetch_nse_metadata(exact_symbol, c_name)
+                            market_type = metadata.get("marketType") or "N"
 
-        if payloads or skip_symbols:
+                            # Cache in Redis so all future hourly runs use it directly with 0 extra calls
+                            try:
+                                redis_client_1.hset(
+                                    redis_symbol_meta_key,
+                                    symbol,
+                                    json.dumps({
+                                        "symbol": exact_symbol,
+                                        "series": series,
+                                        "market_type": market_type,
+                                    })
+                                )
+                                cached_meta_map[symbol] = {
+                                    "symbol": exact_symbol,
+                                    "series": series,
+                                    "market_type": market_type,
+                                }
+                            except Exception as save_err:
+                                print(f"Error saving symbol meta to Redis for {symbol}: {save_err}")
+
+                        # 2. Fetch live quote using exact dynamic market_type and series
+                        url = f"{NSE_SYMBOL_DATA_URL}?functionName=getSymbolData&marketType={market_type}&series={series}&symbol={exact_symbol}"
+                        req_headers = {
+                            **headers,
+                            "path": f"/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType={market_type}&series={series}&symbol={exact_symbol}",
+                            "referer": f"https://www.nseindia.com/get-quotes/equity?symbol={exact_symbol}",
+                        }
+                        async with session.get(url, headers=req_headers) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                eq_resp = data.get("equityResponse", [])
+                                if eq_resp:
+                                    trade_info = eq_resp[0].get("tradeInfo") or {}
+                                    meta_data = eq_resp[0].get("metaData") or {}
+                                    return comp, {
+                                        "CH_SYMBOL": exact_symbol,
+                                        "CH_SERIES": series,
+                                        "mTIMESTAMP": trade_info.get("secwisedelposdate", None),
+                                        "CH_PREVIOUS_CLS_PRICE": meta_data.get("previousClose"),
+                                        "CH_OPENING_PRICE": meta_data.get("open"),
+                                        "CH_TRADE_HIGH_PRICE": meta_data.get("dayHigh"),
+                                        "CH_TRADE_LOW_PRICE": meta_data.get("dayLow"),
+                                        "CH_LAST_TRADED_PRICE": meta_data.get("lastPrice"),
+                                        "CH_CLOSING_PRICE": trade_info.get("closePrice"),
+                                        "VWAP": meta_data.get("averagePrice"),
+                                        "CH_TOT_TRADED_QTY": trade_info.get("quantitytraded"),
+                                        "CH_TOT_TRADED_VAL": trade_info.get("totalTradedValue"),
+                                        "CH_TOTAL_TRADES": None,
+                                        "CH_TIMESTAMP": None,
+                                        "COP_DELIV_QTY": trade_info.get("deliveryquantity"),
+                                        "COP_DELIV_PERC": trade_info.get("deliveryToTradedQuantity"),
+                                    }
+
+                        # 3. Fallback: If cached request failed (e.g. series reclassified), refresh metadata
+                        if meta:
+                            nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                            if nse_company_list:
+                                exact_symbol = nse_company_list[0].get("symbol") or symbol
+                                c_name = "-".join(nse_company_list[0].get("company_name", "").split())
+                                series = nse_company_list[0].get("series") or "EQ"
+                                metadata = await fetch_nse_metadata(exact_symbol, c_name)
+                                market_type = metadata.get("marketType") or "N"
+
+                                # Update Redis cache
+                                try:
+                                    redis_client_1.hset(
+                                        redis_symbol_meta_key,
+                                        symbol,
+                                        json.dumps({
+                                            "symbol": exact_symbol,
+                                            "series": series,
+                                            "market_type": market_type,
+                                        })
+                                    )
+                                    cached_meta_map[symbol] = {
+                                        "symbol": exact_symbol,
+                                        "series": series,
+                                        "market_type": market_type,
+                                    }
+                                except Exception:
+                                    pass
+
+                                symbol_data = await fetch_nse_symbol_data(exact_symbol, market_type, series)
+                                eq_resp = symbol_data.get("equityResponse", [])
+                                if eq_resp:
+                                    trade_info = eq_resp[0].get("tradeInfo") or {}
+                                    meta_data = eq_resp[0].get("metaData") or {}
+                                    return comp, {
+                                        "CH_SYMBOL": exact_symbol,
+                                        "CH_SERIES": series,
+                                        "mTIMESTAMP": trade_info.get("secwisedelposdate", None),
+                                        "CH_PREVIOUS_CLS_PRICE": meta_data.get("previousClose"),
+                                        "CH_OPENING_PRICE": meta_data.get("open"),
+                                        "CH_TRADE_HIGH_PRICE": meta_data.get("dayHigh"),
+                                        "CH_TRADE_LOW_PRICE": meta_data.get("dayLow"),
+                                        "CH_LAST_TRADED_PRICE": meta_data.get("lastPrice"),
+                                        "CH_CLOSING_PRICE": trade_info.get("closePrice"),
+                                        "VWAP": meta_data.get("averagePrice"),
+                                        "CH_TOT_TRADED_QTY": trade_info.get("quantitytraded"),
+                                        "CH_TOT_TRADED_VAL": trade_info.get("totalTradedValue"),
+                                        "CH_TOTAL_TRADES": None,
+                                        "CH_TIMESTAMP": None,
+                                        "COP_DELIV_QTY": trade_info.get("deliveryquantity"),
+                                        "COP_DELIV_PERC": trade_info.get("deliveryToTradedQuantity"),
+                                    }
+
+                        return comp, None
+                    except Exception as err:
+                        print(f"Error fetching live data for {symbol}: {err}")
+                        return comp, None
+
+            # Process in concurrent chunks of 100 to stream to Celery batches
+            STREAM_CHUNK = 100
+            for i in range(0, len(unprocessed_companies), STREAM_CHUNK):
+                company_slice = unprocessed_companies[i : i + STREAM_CHUNK]
+                tasks = [fetch_single_company_live(comp) for comp in company_slice]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                chunk_failed_symbols = []
+                for comp, res in zip(company_slice, results):
+                    if isinstance(res, Exception) or not res:
+                        chunk_failed_symbols.append(comp.nse_symbol)
+                        continue
+                    company, deliverable = res
+                    if deliverable:
+                        payloads.append({
+                            "company_id": company.id,
+                            "symbol": company.nse_symbol,
+                            "nse": deliverable,
+                        })
+                        new_process_symbol.append(company.nse_symbol)
+                    else:
+                        chunk_failed_symbols.append(company.nse_symbol)
+
+                # Remove failed / error symbols from Redis immediately so they don't remain stuck
+                if chunk_failed_symbols:
+                    try:
+                        redis_client_1.srem(f"{redis_prefix}:current_processed_symbols", *chunk_failed_symbols)
+                        redis_client_1.srem(f"{redis_prefix}:error", *chunk_failed_symbols)
+                    except Exception as redis_err:
+                        print(f"Error removing failed symbols from Redis: {redis_err}")
+
+                if len(payloads) >= BATCH_SIZE:
+                    group(
+                        nse_process_delivery_batch.s(payloads.copy(), [], redis_target),
+                    ).apply_async()
+                    payloads.clear()
+
+        # Send any remaining payloads to Celery
+        if payloads:
             group(
                 nse_process_delivery_batch.s(
-                    payloads.copy(), skip_symbols.copy(),
+                    payloads.copy(), [],
                     redis_target
                 ),
             ).apply_async()
             payloads.clear()
-            skip_symbols.clear()
 
     finally:
+        # Cleanup: Remove any symbols from Redis current_processed_symbols and error that were not sent in batches
+        if started_symbols and redis_prefix:
+            remaining_symbols = set(started_symbols) - set(new_process_symbol)
+            if remaining_symbols:
+                try:
+                    redis_client_1.srem(f"{redis_prefix}:current_processed_symbols", *remaining_symbols)
+                    redis_client_1.srem(f"{redis_prefix}:error", *remaining_symbols)
+                except Exception as e:
+                    print(f"Error cleaning up remaining symbols from Redis: {e}")
         db.close()
 
 # fetch stock chart data
