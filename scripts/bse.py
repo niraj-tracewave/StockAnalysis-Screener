@@ -1,6 +1,10 @@
 import aiohttp
 import asyncio
+import os
 import ujson
+from aiolimiter import AsyncLimiter
+
+from app.core.proxy_pool import load_proxy_pool
 
 #bse new changes done
 class RawBSEClient:
@@ -8,8 +12,17 @@ class RawBSEClient:
 
     def __init__(self):
         self.session = None
+        self.proxy_pool = load_proxy_pool("bse", default_concurrency=4)
+        self.rate_limiter = AsyncLimiter(
+            max(1, int(os.environ.get("BSE_REQUESTS_PER_SECOND", "4"))),
+            time_period=1,
+        )
+        self._proxy_lease = None
+        self._proxy_endpoint = None
 
     async def init(self):
+        self._proxy_lease = self.proxy_pool.lease()
+        self._proxy_endpoint = await self._proxy_lease.__aenter__()
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=7200,
             limit=20,
@@ -36,15 +49,23 @@ class RawBSEClient:
     async def close(self):
         if self.session:
             await self.session.close()
+        if self._proxy_lease:
+            await self._proxy_lease.__aexit__(None, None, None)
 
     async def _get(self, endpoint, params=None):
         """Return raw JSON response for ANY endpoint."""
         try:
-            async with self.session.get(f"{self.BASE}/{endpoint}", params=params) as r:
+            async with self.rate_limiter, self.session.get(
+                    f"{self.BASE}/{endpoint}",
+                    params=params,
+                    proxy=self._proxy_endpoint.url,
+                ) as r:
                 r.raise_for_status()
                 raw = await r.read()
+                self.proxy_pool.success(self._proxy_endpoint)
                 return ujson.loads(raw)
         except Exception:
+            self.proxy_pool.failure(self._proxy_endpoint)
             return None   # keep going even if BSE returns errors
 
     # -------------------------------------------------------

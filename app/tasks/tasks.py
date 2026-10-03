@@ -45,6 +45,9 @@ def run_locked_async_task(lock_name, coro):
     lock_value = str(uuid.uuid4())
     acquired = redis_client.set(lock_key, lock_value, nx=True, ex=TASK_LOCK_TTL_SECONDS)
     if not acquired:
+        close = getattr(coro, "close", None)
+        if close:
+            close()
         print(f"Skipping {lock_name}: previous run is still active")
         return None
 

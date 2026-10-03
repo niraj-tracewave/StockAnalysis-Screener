@@ -141,7 +141,7 @@ async def block_bulk_short_selling(
 async def get_company_stock_delivery(
     company_id: int,
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1),
+    page_size: int = Query(10, ge=1, le=500),
     platform: Optional[str] = Query(None, description="Optional platform filter: NSE or BSE"),
     db: Session = Depends(get_db),
 ):

@@ -1,0 +1,27 @@
+{
+  "yahoo": {
+    "direct_fallback": true,
+    "endpoints": [
+      {
+        "name": "yahoo-primary-a",
+        "url_env": "YAHOO_PROXY_1_URL",
+        "max_concurrency": 12,
+        "weight": 2
+      },
+      {
+        "name": "yahoo-primary-b",
+        "url_env": "YAHOO_PROXY_2_URL",
+        "max_concurrency": 12,
+        "weight": 2
+      },
+      {
+        "name": "yahoo-backup",
+        "url_env": "YAHOO_PROXY_3_URL",
+        "max_concurrency": 6,
+        "weight": 1
+      }
+    ]
+  },
+  "nse": {"direct_fallback": true, "endpoints": []},
+  "bse": {"direct_fallback": true, "endpoints": []}
+}

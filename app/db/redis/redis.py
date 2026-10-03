@@ -1,16 +1,10 @@
 import redis
 
-redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
-    decode_responses=True
-)
+from app.core.config import get_settings
 
 
-redis_client_1 = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=10,
-    decode_responses=True
-)
+settings = get_settings()
+
+redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+redis_client_1 = redis.Redis.from_url(settings.redis_secondary_url, decode_responses=True)

@@ -1,6 +1,10 @@
 import aiohttp
 import asyncio
+import os
 import ujson
+from aiolimiter import AsyncLimiter
+
+from app.core.proxy_pool import load_proxy_pool
 
 
 class FastNSEClient:
@@ -8,8 +12,17 @@ class FastNSEClient:
 
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
+        self.proxy_pool = load_proxy_pool("nse", default_concurrency=4)
+        self.rate_limiter = AsyncLimiter(
+            max(1, int(os.environ.get("NSE_REQUESTS_PER_SECOND", "4"))),
+            time_period=1,
+        )
+        self._proxy_lease = None
+        self._proxy_endpoint = None
 
     async def init(self):
+        self._proxy_lease = self.proxy_pool.lease()
+        self._proxy_endpoint = await self._proxy_lease.__aenter__()
         # Ultra-fast TCP connector tuning
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=3600,     # cache DNS for 1 hour
@@ -42,27 +55,50 @@ class FastNSEClient:
         )
 
         # Get cookies fast without downloading large content
-        async with self.session.get("https://www.nseindia.com", allow_redirects=True):
-            pass
+        try:
+            async with self.session.get(
+                "https://www.nseindia.com",
+                allow_redirects=True,
+                proxy=self._proxy_endpoint.url,
+            ) as response:
+                response.raise_for_status()
+                self.proxy_pool.success(self._proxy_endpoint)
+        except Exception:
+            self.proxy_pool.failure(self._proxy_endpoint)
+            raise
 
     async def close(self):
-        await self.session.close()
+        if self.session:
+            await self.session.close()
+        if self._proxy_lease:
+            await self._proxy_lease.__aexit__(None, None, None)
 
     async def _call(self, params: dict, safe=False):
         try:
-            async with self.session.get(self.BASE, params=params) as r:
+            async with self.rate_limiter, self.session.get(
+                    self.BASE,
+                    params=params,
+                    proxy=self._proxy_endpoint.url,
+                ) as r:
                 if not safe:
                     r.raise_for_status()
-                    return await r.json(loads=ujson.loads)
+                    result = await r.json(loads=ujson.loads)
+                    self.proxy_pool.success(self._proxy_endpoint)
+                    return result
 
                 # Safe mode
                 try:
                     r.raise_for_status()
-                    return await r.json(loads=ujson.loads)
+                    result = await r.json(loads=ujson.loads)
+                    self.proxy_pool.success(self._proxy_endpoint)
+                    return result
                 except:
+                    if r.status in {403, 429} or r.status >= 500:
+                        self.proxy_pool.failure(self._proxy_endpoint)
                     return None
 
         except:
+            self.proxy_pool.failure(self._proxy_endpoint)
             if safe: 
                 return None
             raise

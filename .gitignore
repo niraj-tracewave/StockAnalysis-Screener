@@ -130,6 +130,8 @@ __pypackages__/
 # Celery stuff
 celerybeat-schedule
 celerybeat.pid
+celerybeat-schedule.db
+celerybeat-schedule.db*
 
 # SageMath parsed files
 *.sage.py
@@ -137,6 +139,7 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+config/proxies.json
 .venv
 env/
 venv/
@@ -210,6 +213,8 @@ __marimo__/
 .idea/
 # JSON data files
 *.json
+!config/
+!config/proxies.example.json
 
 # Log files
 *.log

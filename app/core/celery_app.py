@@ -1,10 +1,33 @@
+import os
+
 from celery import Celery
 from celery.schedules import crontab
+from dotenv import load_dotenv
+
+
+load_dotenv()
+LEGACY_MARKET_JOBS_ENABLED = os.environ.get(
+    "ENABLE_LEGACY_MARKET_JOBS", "false"
+).lower() in {"1", "true", "yes"}
+BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/2")
+RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/3")
+REDIS_BROKER = BROKER_URL.startswith(("redis://", "rediss://"))
+
+
+def queue_priority(redis_priority: int) -> int:
+    """Keep named priority intent when switching Redis to RabbitMQ."""
+
+    return redis_priority if REDIS_BROKER else 9 - redis_priority
+
+task_modules = ["app.tasks.market_data_tasks"]
+if LEGACY_MARKET_JOBS_ENABLED:
+    task_modules.append("app.tasks.tasks")
 
 celery_app = Celery(
     "company_tasks",
-    broker="redis://localhost:6379/2",
-    backend="redis://localhost:6379/3",
+    broker=BROKER_URL,
+    backend=RESULT_BACKEND,
+    include=task_modules,
 )
 
 celery_app.conf.update(
@@ -15,14 +38,36 @@ celery_app.conf.update(
     enable_utc=True,
     task_soft_time_limit=10200,
     task_time_limit=10800,
-    worker_concurrency=2,
+    worker_concurrency=int(os.environ.get("SCREENER_WORKER_CONCURRENCY", "8")),
     worker_prefetch_multiplier=1,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    broker_connection_retry_on_startup=True,
+    task_default_priority=5,
+    task_queue_max_priority=10,
+    broker_transport_options={
+        "priority_steps": list(range(10)),
+        "queue_order_strategy": "priority",
+    } if REDIS_BROKER else {},
+    task_routes={
+        "refresh_yahoo_quote_batch": {"queue": "market-control", "priority": queue_priority(0)},
+        "refresh_yahoo_quote_shard": {"queue": "market-quotes", "priority": queue_priority(1)},
+        "retry_yahoo_quote_failures": {"queue": "market-quotes", "priority": queue_priority(3)},
+        "backfill_yahoo_history_batch": {"queue": "market-history", "priority": queue_priority(9)},
+    },
 )
 
-celery_app.autodiscover_tasks(["app.tasks"])
-
-
 celery_app.conf.beat_schedule = {
+    "fast-yahoo-quote-batches": {
+        "task": "refresh_yahoo_quote_batch",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "options": {"queue": "market-control", "priority": queue_priority(0)},
+    },
+    "fast-yahoo-retry-batches": {
+        "task": "retry_yahoo_quote_failures",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "options": {"queue": "market-quotes", "priority": queue_priority(3)},
+    },
     # "fetch-nse-company-data-every-20-minutes": {
     #     "task": "fetch_and_store_company_data_from_top_50",
     #     "schedule": crontab(minute="*/15"),
@@ -124,3 +169,10 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=0)
     }
 }
+
+if not LEGACY_MARKET_JOBS_ENABLED:
+    celery_app.conf.beat_schedule = {
+        name: schedule
+        for name, schedule in celery_app.conf.beat_schedule.items()
+        if name.startswith("fast-")
+    }

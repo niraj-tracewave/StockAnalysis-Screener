@@ -872,7 +872,7 @@ async def fetch_stock_quarterly_result_data_async():
                                 response_list = []
                                 for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
                                     financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
-                                    qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                    qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                     consolidated = financial_name_obj.get("type")
                                     ixbrl = integrated_filing_obj.get("xbrlurl")
                                     if consolidated == "consolidated" and financial_name_obj.get("period") == "qtr":
@@ -1495,8 +1495,8 @@ async def fetch_and_update_stock_shareholding_pattern_data_async():
                                 shareholding_data_list = []
                                 for shareholding_obj in shareholding_list:
                                     if shareholding_obj.get("status") == "New":
-                                        navigateurl_promoter = f"Corp_shpPromoterNGroup_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get("qtrid")}"
-                                        navigateurl_publicshareholder = f"Corp_shpSec_SHPPubShold_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get("qtrid")}"
+                                        navigateurl_promoter = f"Corp_shpPromoterNGroup_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get('qtrid')}"
+                                        navigateurl_publicshareholder = f"Corp_shpSec_SHPPubShold_ng/w?SCRIPCODE={company.bse_code}&QtrCode={shareholding_obj.get('qtrid')}"
                                         promoter_data = await new_parse_bse_promoter_table(navigateurl_promoter)
                                         public_shareholder_data = await new_parse_bse_public_shareholder_table(navigateurl_publicshareholder)
                                         promoter_data.update(public_shareholder_data)
@@ -1675,7 +1675,7 @@ async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_consolidate
                             c_list = await main_find_company_json(c_name)
                             exact_company = await find_by_scripcode(c_list, company.bse_code)
                             if exact_company:
-                                html_data = await main_balance_sheet_html(f"SCRIP-{exact_company.get("FINCODE")}")
+                                html_data = await main_balance_sheet_html(f"SCRIP-{exact_company.get('FINCODE')}")
                                 soup = BeautifulSoup(html_data, "html.parser")
                                 if not balance_sheet:
                                     balance_sheet_data = await parse_balance_sheet(soup)
@@ -1850,7 +1850,7 @@ async def fetch_and_update_stock_balance_sheet_profit_loss_cash_flow_standalone_
                             c_list = await main_find_company_json(c_name)
                             exact_company = await find_by_scripcode(c_list, company.bse_code)
                             if exact_company:
-                                html_data = await main_balance_sheet_standalone_html(f"SCRIP-{exact_company.get("FINCODE")}")
+                                html_data = await main_balance_sheet_standalone_html(f"SCRIP-{exact_company.get('FINCODE')}")
                                 soup = BeautifulSoup(html_data, "html.parser")
                                 if not balance_sheet:
                                     balance_sheet_data = await parse_balance_sheet(soup)
@@ -2331,7 +2331,7 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                         ixbrl = f"https://www.bseindia.com{ixbrl}"
                                         financial_name_obj = await parse_financial_name(
                                             i.get("Quarter_Name"))
-                                        qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                        qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                         output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
                                             ixbrl)
                                         if output:
@@ -2347,7 +2347,7 @@ async def fetch_calculate_and_update_stock_book_value_data_async():
                                         ixbrl = f"https://www.bseindia.com{ixbrl}"
                                         financial_name_obj = await parse_financial_name(
                                             st.get("Quarter_Name"))
-                                        qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                        qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                         output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
                                             ixbrl)
                                         if output:
@@ -2814,7 +2814,7 @@ async def fetch_calculate_and_update_stock_roce_data_async():
                                         ixbrl = f"https://www.bseindia.com{ixbrl}"
                                         financial_name_obj = await parse_financial_name(
                                             i.get("Quarter_Name"))
-                                        qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                        qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                         output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
                                             ixbrl)
                                         output['date'] = qe_date
@@ -2840,7 +2840,7 @@ async def fetch_calculate_and_update_stock_roce_data_async():
                                             ixbrl = f"https://www.bseindia.com{ixbrl}"
                                             financial_name_obj = await parse_financial_name(
                                                 st.get("Quarter_Name"))
-                                            qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                            qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                             output, amount_type, format_type = await fetch_integrated_filing_financials_data_from_bse_for_book_value(
                                                 ixbrl)
                                             output['date'] = qe_date
@@ -3202,7 +3202,7 @@ async def fetch_stock_quarterly_result_standalone_data_async():
                                 response_list = []
                                 for integrated_filing_obj in integrated_filing_financials_list.get("Table"):
                                     financial_name_obj = await parse_financial_name(integrated_filing_obj.get("Quarter_Name"))
-                                    qe_date = f"{financial_name_obj.get("month")}-{financial_name_obj.get("year")}"
+                                    qe_date = f"{financial_name_obj.get('month')}-{financial_name_obj.get('year')}"
                                     consolidated = financial_name_obj.get("type")
                                     ixbrl = integrated_filing_obj.get("xbrlurl")
                                     if consolidated == "standalone" and financial_name_obj.get("period") == "qtr":

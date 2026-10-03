@@ -68,7 +68,7 @@ async def fetch_nse_data(search):
                 activeSeries = symbol_data.get("activeSeries")
                 if activeSeries:
                     series = activeSeries[0]
-                    nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{series}")
+                    nse_code = await get_nse_code_from_angel(f"{symbol_data.get('symbol')}-{series}")
                     company_list.append({
                         "symbol": symbol_data.get("symbol"),
                         "company_name": symbol_data.get("symbol_info"),
@@ -99,7 +99,7 @@ async def fetch_nse_exact_symbol_data(search):
                 if symbol_data:
                     activeSeries = symbol_data.get("series")
                     if activeSeries:
-                        nse_code = await get_nse_code_from_angel(f"{symbol_data.get("symbol")}-{activeSeries}")
+                        nse_code = await get_nse_code_from_angel(f"{symbol_data.get('symbol')}-{activeSeries}")
                         company_list.append({
                                 "symbol": symbol_data.get("symbol"),
                                 "company_name": symbol_data.get("companyName"),

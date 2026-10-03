@@ -126,7 +126,7 @@ async def main_nse_fetch_shareholding_data_using_api(id, symbol, name, rec_id, r
 
         def fetch_api(params):
             try:
-                base1_url = f"{base_url}?ndsId={params.get("ndsId")}&index={params.get('index')}"
+                base1_url = f"{base_url}?ndsId={params.get('ndsId')}&index={params.get('index')}"
                 response = requests.get(base1_url, headers=HEADERS, timeout=10)
                 if response.status_code == 200:
                     return response.json()
@@ -250,7 +250,7 @@ async def main_nse_fetch_shareholding_data_using_api_for_book_value(id, symbol, 
 
         def fetch_api(params):
             try:
-                base1_url = f"{base_url}?ndsId={params.get("ndsId")}&index={params.get('index')}"
+                base1_url = f"{base_url}?ndsId={params.get('ndsId')}&index={params.get('index')}"
                 response = requests.get(base1_url, headers=HEADERS, timeout=10)
                 if response.status_code == 200:
                     return response.json()

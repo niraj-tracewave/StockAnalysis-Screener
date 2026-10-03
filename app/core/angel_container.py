@@ -1,6 +1,3 @@
-from typing import Optional
-from app.core.angel_auto_login import AngelAutoLogin
-from app.core.angel_ws import AngelWSClient
 from app.core.config import get_settings
 
 
@@ -17,6 +14,11 @@ def get_angel():
     global angel
 
     if angel is None:
+        # The broker SDK performs network setup during import/initialization, so
+        # keep it out of normal HTTP API startup and load it only for a socket user.
+        from app.core.angel_auto_login import AngelAutoLogin
+        from app.core.angel_ws import AngelWSClient
+
         print("🚀 Creating Angel instance...")
 
         try:
