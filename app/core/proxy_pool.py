@@ -398,6 +398,9 @@ def load_proxy_pool(
         lease_ttl_seconds=int(os.environ.get("PROXY_LEASE_TTL_SECONDS", "45")),
         acquire_timeout_seconds=float(os.environ.get("PROXY_ACQUIRE_TIMEOUT_SECONDS", "60")),
         direct_max_concurrency=int(
-            os.environ.get("YAHOO_DIRECT_MAX_CONCURRENCY", "4")
+            os.environ.get(
+                f"{provider.upper()}_DIRECT_MAX_CONCURRENCY",
+                os.environ.get("PROXY_DIRECT_MAX_CONCURRENCY", "4"),
+            )
         ),
     )

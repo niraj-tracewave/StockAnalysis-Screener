@@ -8,7 +8,7 @@ Current database completeness and the provider plan are in
 [`DATA_COVERAGE_REPORT.md`](DATA_COVERAGE_REPORT.md) and
 [`DATA_SOURCE_MATRIX.md`](DATA_SOURCE_MATRIX.md).
 
-Local FastAPI service and high-throughput NSE/BSE/Yahoo market-data pipeline.
+Local FastAPI service and high-throughput official NSE/BSE market-data pipeline.
 
 ## Services
 
@@ -28,27 +28,30 @@ cp .env.example .env
 ```
 
 The seed command is idempotent. It reads `OpenAPIScripMaster.json`, prefers NSE
-for dual-listed securities, and adds BSE-only securities with Yahoo `.BO`
-symbols.
+for dual-listed securities, and keeps BSE-only securities keyed by BSE scrip
+code. The existing Yahoo symbol column remains only for API/schema compatibility.
 
 ## Fast market-data commands
 
 Refresh a bounded quote batch:
 
 ```bash
-.venv/bin/python scripts/market_data.py quotes --limit 500 --concurrency 12
+.venv/bin/python scripts/market_data.py quotes --provider nse --limit 100
+.venv/bin/python scripts/market_data.py quotes --provider bse --limit 100
 ```
 
-Backfill full daily price/volume history separately:
+Yahoo history is retained as an explicit manual compatibility command only; it
+is never scheduled or used for current-price rows:
 
 ```bash
-.venv/bin/python scripts/market_data.py backfill --limit 100 --offset 0 --concurrency 8
+.venv/bin/python scripts/market_data.py yahoo-backfill --limit 100 --offset 0
 ```
 
-Continuous quote updates rotate through 500 securities every two minutes from
-09:00 through 16:59 IST on weekdays. Legacy scraper schedules are disabled by
-default; set `ENABLE_LEGACY_MARKET_JOBS=true` only when those slower jobs are
-intentionally required.
+Continuous official quote updates use six NSE shards and two BSE shards of 100
+securities every minute from 09:00 through 16:59 IST on weekdays. Yahoo and
+legacy scraper schedules are disabled by default. BSE currently blocks direct
+traffic from many residential IPs, so configure an authorized BSE proxy before
+enabling a production BSE backfill.
 
 ## Start manually
 

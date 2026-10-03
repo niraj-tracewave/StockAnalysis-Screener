@@ -30,7 +30,7 @@ async def show(provider: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("provider", choices=("yahoo", "nse", "bse"), default="yahoo", nargs="?")
+    parser.add_argument("provider", choices=("yahoo", "nse", "bse"), default="nse", nargs="?")
     args = parser.parse_args()
     asyncio.run(show(args.provider))
 

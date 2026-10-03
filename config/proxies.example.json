@@ -22,6 +22,18 @@
       }
     ]
   },
-  "nse": {"direct_fallback": true, "endpoints": []},
-  "bse": {"direct_fallback": true, "endpoints": []}
+  "nse": {
+    "direct_fallback": true,
+    "endpoints": [
+      {"name": "nse-primary-a", "url_env": "NSE_PROXY_1_URL", "max_concurrency": 4, "weight": 2},
+      {"name": "nse-primary-b", "url_env": "NSE_PROXY_2_URL", "max_concurrency": 4, "weight": 2}
+    ]
+  },
+  "bse": {
+    "direct_fallback": true,
+    "endpoints": [
+      {"name": "bse-primary-a", "url_env": "BSE_PROXY_1_URL", "max_concurrency": 4, "weight": 2},
+      {"name": "bse-primary-b", "url_env": "BSE_PROXY_2_URL", "max_concurrency": 4, "weight": 2}
+    ]
+  }
 }

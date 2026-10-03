@@ -17,21 +17,18 @@ transport failures instead of attempting to bypass a provider block.
 ```text
 Celery Beat
    |
-   +-- Yahoo quote coordinator (one logical run)
-   |      |
-   |      +-- 8 shard tasks x 250-500 stocks
-   |             |
-   |             +-- bounded async requests (default 12 per shard)
-   |             +-- provider-specific proxy lease
-   |             +-- one PostgreSQL upsert transaction per shard
-   |             +-- failed symbols -> Redis retry set
+   +-- NSE quote coordinator -> 6 x 100-stock shards -> nse-quotes
    |
-   +-- Yahoo retry coordinator
-   |      +-- drains retry symbols into idempotent shard tasks
+   +-- BSE quote coordinator -> 2 x 100-stock shards -> bse-quotes
    |
-   +-- Yahoo history backfill (separate low-priority/manual stream)
+   +-- provider retry coordinators
+   |      +-- drain idempotent Redis retry sets
    |
-   +-- NSE/BSE fundamentals (separate queues and conservative limits)
+   +-- each shard
+   |      +-- one shared async HTTP session
+   |      +-- a proxy lease per request
+   |      +-- bounded rate/concurrency and jittered retry
+   |      +-- one PostgreSQL bulk upsert
    |
    +-- Announcement project
           +-- independent NSE proxy pool and sticky HTTP session
@@ -52,12 +49,12 @@ kept out of equity quote and retry queues.
 ## Throughput model
 
 - Default: 8 Celery process workers.
-- One coordinator reserves 8 non-overlapping shards of 250 stocks (2,000 stocks
-  per wave) using an atomic Redis cursor.
-- Each shard allows 12 in-flight Yahoo calls, for a maximum of 96 requests in
-  flight per worker host. These values are configurable without code changes.
-- A 13,679-stock universe is approximately seven waves. Even at several minutes
-  per wave, retries included, this leaves substantial margin inside one hour.
+- Coordinators reserve non-overlapping 100-stock shards with an atomic Redis
+  cursor: six NSE shards and two BSE shards per minute.
+- The direct NSE path is Redis-limited to eight requests across all processes;
+  configured proxies add their own independently leased capacity.
+- The live NSE validation processed a 100-stock shard in about 49 seconds and
+  completed 3,514 valid quotes from a 3,540-row universe in a few minutes.
 - Database writes are PostgreSQL bulk upserts, never one commit per stock.
 
 Increasing parallelism beyond the provider's healthy capacity can make the run
@@ -74,13 +71,13 @@ time limits.
 
 Redis keys provide control-plane state only:
 
-- `market-data:yahoo:quote:offset` - next unreserved universe position.
-- `market-data:yahoo:retry` - symbols awaiting retry.
-- `market-data:yahoo:retry-attempts` - bounded retry counters.
-- `market-data:yahoo:quarantine` - provider-unsupported symbols with expiry.
-- `market-data:yahoo:last-dispatch` - coordinator metrics.
+- `market-data:{nse|bse}:quote-offset` - next unreserved universe position.
+- `market-data:{nse|bse}:retry` - symbols awaiting retry.
+- `market-data:{nse|bse}:retry-attempts` - bounded retry counters.
+- `market-data:{nse|bse}:quarantine` - unsupported symbols with expiry.
+- `market-data:{nse|bse}:last-dispatch` - coordinator metrics.
 
-Permanent symbol errors (for example Yahoo `404`) enter a seven-day,
+Permanent symbol errors enter a one-day,
 self-expiring quarantine instead of the transient retry loop. After expiry the
 symbol is automatically re-probed, allowing newly supported listings to
 recover without manual cleanup. Permanent errors do not reduce proxy health.
@@ -94,11 +91,8 @@ Each project has an ignored local `config/proxies.json` and a committed example:
 
 ```json
 {
-  "yahoo": [
-    {"url": "http://user:password@proxy-a.example:8080", "max_concurrency": 12}
-  ],
-  "nse": [],
-  "bse": []
+  "nse": {"endpoints": [{"url_env": "NSE_PROXY_1_URL", "max_concurrency": 4}]},
+  "bse": {"endpoints": [{"url_env": "BSE_PROXY_1_URL", "max_concurrency": 4}]}
 }
 ```
 
@@ -114,19 +108,19 @@ drops suddenly and prevents a healthy fast proxy from producing an accidental
 request burst. Runtime proxy scoring and cooldown remain project-owned because
 transport libraries do not understand NSE/BSE/Yahoo health semantics.
 
-NSE's cookie-prime request and API request use the same sticky proxy and the
-same `requests.Session`. BSE pages from one poll use the same endpoint. A failed
-poll is retried with another healthy endpoint by the Celery task on the next
-scheduled cycle; current task locks prevent duplicate inserts.
+NSE does not need a slow homepage bootstrap: the current official quote endpoint
+works directly with one reused `aiohttp` session. Every NSE/BSE request leases
+capacity independently, so concurrent endpoint calls can rotate without
+overloading one address. A failed request retries another healthy endpoint.
 
 ## Data streams
 
 | Stream | Cadence | Shard size | Concurrency | Persistence |
 |---|---:|---:|---:|---|
-| Yahoo quotes | continuous market window | 250 x 8 | 12/shard | bulk upsert |
-| Yahoo retry | every minute | up to 250 | 12 | bulk upsert |
-| Yahoo history | manual/nightly | 100-250 | 4-8 | bulk insert/update |
-| NSE/BSE fundamentals | separate queues | 200-500 | provider-limited | existing schema |
+| NSE quotes | every minute in market window | 100 x 6 | 6/shard, global direct 8 | bulk upsert |
+| BSE quotes | every minute in market window | 100 x 2 | 4/shard | bulk upsert |
+| Exchange retry | every minute | up to 100/provider | provider-limited | bulk upsert |
+| Yahoo history | manual compatibility only | 100 | manual | existing schema |
 | NSE/BSE announcements | 10-second live dispatch | pages per poll | one sticky session/feed | bulk create |
 
 ## Operational guardrails
@@ -144,7 +138,7 @@ scheduled cycle; current task locks prevent duplicate inserts.
 ## Delivery phases
 
 1. Add provider-aware proxy health modules and isolated configuration.
-2. Replace the single Yahoo batch lock with atomic multi-shard dispatch.
+2. Use provider-specific atomic multi-shard dispatch.
 3. Add retry/resume tasks and operational metrics.
 4. Route announcement NSE/BSE sessions through their independent sticky pools.
 5. Validate contracts, compile/tests, local services, and measured throughput.

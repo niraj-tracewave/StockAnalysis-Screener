@@ -1,6 +1,6 @@
-# Yahoo Proxy Operations
+# NSE/BSE Proxy Operations
 
-The Yahoo market-data pipeline supports eight environment-backed proxy slots.
+The official exchange pipeline supports separate NSE and BSE environment-backed proxy slots.
 Selection is latency/failure weighted. Health, cooldowns and active concurrency
 leases are shared through Redis, so all eight Celery processes respect one
 global limit per endpoint.
@@ -11,20 +11,17 @@ Put provider credentials only in the ignored `.env` file. Do not put URLs with
 credentials in `config/proxies.json`:
 
 ```env
-YAHOO_PROXY_1_URL=http://username:password@host:port
-YAHOO_PROXY_2_URL=http://username:password@host:port
-YAHOO_PROXY_3_URL=
-YAHOO_PROXY_4_URL=
-YAHOO_PROXY_5_URL=
-YAHOO_PROXY_6_URL=
-YAHOO_PROXY_7_URL=
-YAHOO_PROXY_8_URL=
+NSE_PROXY_1_URL=http://username:password@host:port
+NSE_PROXY_2_URL=http://username:password@host:port
+BSE_PROXY_1_URL=http://username:password@host:port
+BSE_PROXY_2_URL=http://username:password@host:port
 
 PROXY_FAILURE_THRESHOLD=3
 PROXY_COOLDOWN_SECONDS=60
 PROXY_LEASE_TTL_SECONDS=45
 PROXY_ACQUIRE_TIMEOUT_SECONDS=60
-YAHOO_DIRECT_MAX_CONCURRENCY=4
+NSE_DIRECT_MAX_CONCURRENCY=8
+BSE_DIRECT_MAX_CONCURRENCY=4
 ```
 
 Per-endpoint concurrency is configured in `config/proxies.json`. Start at four
@@ -45,7 +42,10 @@ endpoint, enters a shared exponential cooldown, and returns automatically after
 cooldown. The current configuration permits direct fallback when no endpoint is
 configured or all endpoint capacity is temporarily unavailable. Direct traffic
 also uses a Redis global lease, so all workers together cannot burst from the
-same Mac IP beyond `YAHOO_DIRECT_MAX_CONCURRENCY`.
+same Mac IP beyond the provider-specific direct concurrency setting. The NSE
+quote endpoint works directly from the current Mac; BSE returned `403` in the
+live preflight, so production BSE work requires an authorized proxy or official
+BSE market-data access.
 
 After changing `.env`, reload the worker and scheduler (or all services):
 

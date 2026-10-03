@@ -1,6 +1,8 @@
 import aiohttp
 import asyncio
 import os
+import random
+import time
 import ujson
 from aiolimiter import AsyncLimiter
 
@@ -17,12 +19,8 @@ class RawBSEClient:
             max(1, int(os.environ.get("BSE_REQUESTS_PER_SECOND", "4"))),
             time_period=1,
         )
-        self._proxy_lease = None
-        self._proxy_endpoint = None
 
     async def init(self):
-        self._proxy_lease = self.proxy_pool.lease()
-        self._proxy_endpoint = await self._proxy_lease.__aenter__()
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=7200,
             limit=20,
@@ -41,7 +39,11 @@ class RawBSEClient:
                     "(KHTML, like Gecko) Chrome/141 Safari/537.36"
                 ),
                 "Accept": "application/json, text/plain, */*",
+                "Origin": "https://www.bseindia.com",
                 "Referer": "https://www.bseindia.com/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
             },
             json_serialize=ujson.dumps,
         )
@@ -49,24 +51,37 @@ class RawBSEClient:
     async def close(self):
         if self.session:
             await self.session.close()
-        if self._proxy_lease:
-            await self._proxy_lease.__aexit__(None, None, None)
+        await self.proxy_pool.close()
 
     async def _get(self, endpoint, params=None):
         """Return raw JSON response for ANY endpoint."""
-        try:
-            async with self.rate_limiter, self.session.get(
-                    f"{self.BASE}/{endpoint}",
-                    params=params,
-                    proxy=self._proxy_endpoint.url,
-                ) as r:
-                r.raise_for_status()
-                raw = await r.read()
-                self.proxy_pool.success(self._proxy_endpoint)
-                return ujson.loads(raw)
-        except Exception:
-            self.proxy_pool.failure(self._proxy_endpoint)
-            return None   # keep going even if BSE returns errors
+        if not self.session:
+            raise RuntimeError("RawBSEClient.init() must be called first")
+        retries = max(1, int(os.environ.get("EXCHANGE_RETRIES", "3")))
+        for attempt in range(retries):
+            try:
+                async with self.rate_limiter, self.proxy_pool.lease() as proxy_endpoint:
+                    started = time.monotonic()
+                    try:
+                        async with self.session.get(
+                            f"{self.BASE}/{endpoint}",
+                            params=params,
+                            proxy=proxy_endpoint.url,
+                        ) as response:
+                            response.raise_for_status()
+                            raw = await response.read()
+                            await self.proxy_pool.success(
+                                proxy_endpoint,
+                                latency_ms=(time.monotonic() - started) * 1000,
+                            )
+                            return ujson.loads(raw)
+                    except Exception as exc:
+                        await self.proxy_pool.failure(proxy_endpoint, type(exc).__name__)
+            except Exception:
+                pass
+            if attempt + 1 < retries:
+                await asyncio.sleep((0.35 * (2**attempt)) + random.random() * 0.25)
+        return None
 
     # -------------------------------------------------------
     # ALL BSE ENDPOINTS (RAW MODE)

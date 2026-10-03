@@ -88,7 +88,8 @@ SOURCE_GUIDE = [
     ("shareholding", "NSE/BSE Regulation 31 shareholding-pattern filings/XBRL"),
     ("delivery data", "Official NSE/BSE bhavcopy and delivery reports"),
     ("bulk, block, short-selling deals", "Official NSE/BSE daily reports"),
-    ("current/high/low/history", "Yahoo chart for broad coverage; exchange quote/bhavcopy for validation"),
+    ("current/high/low", "Official NSE/BSE quote endpoints; official exchange EOD files for validation"),
+    ("history", "Official NSE/BSE EOD historical files"),
 ]
 
 

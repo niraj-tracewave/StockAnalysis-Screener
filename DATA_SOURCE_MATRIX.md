@@ -10,10 +10,10 @@ responses. Coverage numbers come from `DATA_COVERAGE_REPORT.md` generated on
 |---|---:|---|---|---|---:|
 | `company_stock.website` | 0% | NSE/BSE company profile | Company filing | metadata/nightly | 4/provider |
 | sector/industry fields | 0% | NSE/BSE security metadata | BSE profile for BSE-only | metadata/weekly | 4/provider |
-| current/high/low price | 89.9% | Yahoo chart | NSE/BSE quote/bhavcopy validation | quotes/every minute | 8 shards, 10 req/s each |
+| current/high/low price | live status command | Official NSE/BSE quote endpoints | Official exchange EOD files | quotes/every minute | 6 NSE + 2 BSE shards |
 | market cap, PE, face value | 0% | NSE/BSE quote metadata | Filed results plus calculation | fundamentals/daily | 4/provider |
 | book value, ROE, ROCE, dividend yield | 0% | Calculated from filed statements | Exchange summary when present | calculations/after filings | CPU workers |
-| chart history | 5 companies | Yahoo chart | Official EOD historical data | history/nightly | 4-8 workers |
+| chart history | inspect with coverage report | Official NSE/BSE EOD historical data | none | history/nightly | file jobs |
 | quarterly results | 0% | NSE/BSE financial-results XBRL | Company results filing | filings/hourly + backfill | 2-4/provider |
 | P&L, balance sheet, cash flow, ratios | 0% | NSE/BSE XBRL | Annual report parsing | filings/nightly | 2-4/provider |
 | shareholding | 0% | NSE/BSE Regulation 31 XBRL | Company filing | filings/daily | 2-4/provider |
@@ -26,8 +26,8 @@ responses. Coverage numbers come from `DATA_COVERAGE_REPORT.md` generated on
 1. Exchange-published files and XBRL are authoritative for filings, ownership,
    delivery, and deals.
 2. Exchange quote/company endpoints are preferred for security metadata.
-3. Yahoo chart is used for broad price/history coverage and is validated against
-   exchange EOD values.
+3. Current prices come only from official exchange endpoints; missing values
+   remain null until the exchange or an authorized proxy is available.
 4. Ratios are calculated only when all required filing inputs are available.
 5. Missing values remain null; the pipeline must not invent or guess them.
 
@@ -42,10 +42,10 @@ Official discovery pages:
 
 ## Runtime controls
 
-- Yahoo: eight 250-stock shards, concurrency 12 per worker, token-bucket rate
-  limit 10 requests/second per worker.
-- NSE and BSE detail clients: sticky provider proxy, concurrency capped by the
-  proxy endpoint, and four requests/second per process by default.
+- NSE: six 100-stock shards, six companies per shard, Redis-global direct limit
+  eight, and four requests/second per process by default.
+- BSE: two 100-stock shards, four companies per shard, three minimal endpoint
+  calls per company, and provider-isolated proxy health.
 - Transient failures: exponential backoff, jitter, proxy cooldown, and symbol
   retry queue.
 - Permanent/mapping failures: bounded retries followed by Redis dead-letter set.

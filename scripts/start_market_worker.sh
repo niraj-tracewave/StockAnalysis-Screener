@@ -8,6 +8,6 @@ cd "$PROJECT_ROOT"
 exec "$PROJECT_ROOT/.venv/bin/python" -m celery \
   -A app.core.celery_app:celery_app worker \
   --loglevel=INFO \
-  --queues="market-control,market-quotes,market-history,celery" \
+  --queues="exchange-control,nse-quotes,bse-quotes,market-control,market-quotes,market-history,celery" \
   --concurrency="${SCREENER_WORKER_CONCURRENCY:-8}" \
   --hostname="stock-screener@%h"

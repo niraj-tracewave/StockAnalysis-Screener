@@ -56,6 +56,16 @@ def test_proxy_url_can_come_from_environment(tmp_path, monkeypatch):
     assert pool.direct_fallback is False
 
 
+def test_direct_concurrency_is_provider_specific(tmp_path, monkeypatch):
+    monkeypatch.setenv("NSE_DIRECT_MAX_CONCURRENCY", "9")
+    config = tmp_path / "proxies.json"
+    config.write_text('{"nse": {"direct_fallback": true, "endpoints": []}}')
+
+    pool = load_proxy_pool("nse", config_path=str(config))
+
+    assert pool.endpoints[0].max_concurrency == 9
+
+
 def test_unhealthy_endpoint_enters_cooldown_and_rotates():
     async def exercise():
         first = ProxyEndpoint("http://one.example:8080", 1, name="one")

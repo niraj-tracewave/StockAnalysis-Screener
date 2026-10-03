@@ -1,6 +1,8 @@
 import aiohttp
 import asyncio
 import os
+import random
+import time
 import ujson
 from aiolimiter import AsyncLimiter
 
@@ -17,12 +19,8 @@ class FastNSEClient:
             max(1, int(os.environ.get("NSE_REQUESTS_PER_SECOND", "4"))),
             time_period=1,
         )
-        self._proxy_lease = None
-        self._proxy_endpoint = None
 
     async def init(self):
-        self._proxy_lease = self.proxy_pool.lease()
-        self._proxy_endpoint = await self._proxy_lease.__aenter__()
         # Ultra-fast TCP connector tuning
         connector = aiohttp.TCPConnector(
             ttl_dns_cache=3600,     # cache DNS for 1 hour
@@ -54,54 +52,43 @@ class FastNSEClient:
             }
         )
 
-        # Get cookies fast without downloading large content
-        try:
-            async with self.session.get(
-                "https://www.nseindia.com",
-                allow_redirects=True,
-                proxy=self._proxy_endpoint.url,
-            ) as response:
-                response.raise_for_status()
-                self.proxy_pool.success(self._proxy_endpoint)
-        except Exception:
-            self.proxy_pool.failure(self._proxy_endpoint)
-            raise
-
     async def close(self):
         if self.session:
             await self.session.close()
-        if self._proxy_lease:
-            await self._proxy_lease.__aexit__(None, None, None)
+        await self.proxy_pool.close()
 
     async def _call(self, params: dict, safe=False):
-        try:
-            async with self.rate_limiter, self.session.get(
-                    self.BASE,
-                    params=params,
-                    proxy=self._proxy_endpoint.url,
-                ) as r:
-                if not safe:
-                    r.raise_for_status()
-                    result = await r.json(loads=ujson.loads)
-                    self.proxy_pool.success(self._proxy_endpoint)
-                    return result
-
-                # Safe mode
-                try:
-                    r.raise_for_status()
-                    result = await r.json(loads=ujson.loads)
-                    self.proxy_pool.success(self._proxy_endpoint)
-                    return result
-                except:
-                    if r.status in {403, 429} or r.status >= 500:
-                        self.proxy_pool.failure(self._proxy_endpoint)
-                    return None
-
-        except:
-            self.proxy_pool.failure(self._proxy_endpoint)
-            if safe: 
-                return None
-            raise
+        if not self.session:
+            raise RuntimeError("FastNSEClient.init() must be called first")
+        retries = max(1, int(os.environ.get("EXCHANGE_RETRIES", "3")))
+        last_error = None
+        for attempt in range(retries):
+            try:
+                async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
+                    started = time.monotonic()
+                    try:
+                        async with self.session.get(
+                            self.BASE,
+                            params=params,
+                            proxy=endpoint.url,
+                        ) as response:
+                            response.raise_for_status()
+                            result = await response.json(loads=ujson.loads, content_type=None)
+                            await self.proxy_pool.success(
+                                endpoint,
+                                latency_ms=(time.monotonic() - started) * 1000,
+                            )
+                            return result
+                    except Exception as exc:
+                        last_error = exc
+                        await self.proxy_pool.failure(endpoint, type(exc).__name__)
+            except Exception as exc:
+                last_error = exc
+            if attempt + 1 < retries:
+                await asyncio.sleep((0.35 * (2**attempt)) + random.random() * 0.25)
+        if safe:
+            return None
+        raise last_error or RuntimeError("NSE request failed")
 
     # --- Basic API wrappers ---
     async def n(self, s): return await self._call({"functionName": "getSymbolName", "symbol": s})

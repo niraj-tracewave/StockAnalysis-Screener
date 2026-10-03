@@ -9,6 +9,18 @@ load_dotenv()
 LEGACY_MARKET_JOBS_ENABLED = os.environ.get(
     "ENABLE_LEGACY_MARKET_JOBS", "false"
 ).lower() in {"1", "true", "yes"}
+EXCHANGE_MARKET_JOBS_ENABLED = os.environ.get(
+    "ENABLE_EXCHANGE_MARKET_JOBS", "true"
+).lower() in {"1", "true", "yes"}
+YAHOO_MARKET_JOBS_ENABLED = os.environ.get(
+    "ENABLE_YAHOO_MARKET_JOBS", "false"
+).lower() in {"1", "true", "yes"}
+NSE_MARKET_JOBS_ENABLED = os.environ.get(
+    "ENABLE_NSE_MARKET_JOBS", "true"
+).lower() in {"1", "true", "yes"}
+BSE_MARKET_JOBS_ENABLED = os.environ.get(
+    "ENABLE_BSE_MARKET_JOBS", "false"
+).lower() in {"1", "true", "yes"}
 BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/2")
 RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/3")
 REDIS_BROKER = BROKER_URL.startswith(("redis://", "rediss://"))
@@ -19,7 +31,11 @@ def queue_priority(redis_priority: int) -> int:
 
     return redis_priority if REDIS_BROKER else 9 - redis_priority
 
-task_modules = ["app.tasks.market_data_tasks"]
+task_modules = []
+if EXCHANGE_MARKET_JOBS_ENABLED:
+    task_modules.append("app.tasks.exchange_data_tasks")
+if YAHOO_MARKET_JOBS_ENABLED:
+    task_modules.append("app.tasks.market_data_tasks")
 if LEGACY_MARKET_JOBS_ENABLED:
     task_modules.append("app.tasks.tasks")
 
@@ -50,6 +66,9 @@ celery_app.conf.update(
         "queue_order_strategy": "priority",
     } if REDIS_BROKER else {},
     task_routes={
+        "refresh_exchange_quote_batch": {"queue": "exchange-control", "priority": queue_priority(0)},
+        "refresh_exchange_quote_shard": {"queue": "nse-quotes", "priority": queue_priority(1)},
+        "retry_exchange_quote_failures": {"queue": "nse-quotes", "priority": queue_priority(3)},
         "refresh_yahoo_quote_batch": {"queue": "market-control", "priority": queue_priority(0)},
         "refresh_yahoo_quote_shard": {"queue": "market-quotes", "priority": queue_priority(1)},
         "retry_yahoo_quote_failures": {"queue": "market-quotes", "priority": queue_priority(3)},
@@ -58,6 +77,30 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "fast-nse-quote-batches": {
+        "task": "refresh_exchange_quote_batch",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "args": ("nse",),
+        "options": {"queue": "exchange-control", "priority": queue_priority(0)},
+    },
+    "fast-bse-quote-batches": {
+        "task": "refresh_exchange_quote_batch",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "args": ("bse",),
+        "options": {"queue": "exchange-control", "priority": queue_priority(0)},
+    },
+    "fast-nse-retry-batches": {
+        "task": "retry_exchange_quote_failures",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "args": ("nse",),
+        "options": {"queue": "nse-quotes", "priority": queue_priority(3)},
+    },
+    "fast-bse-retry-batches": {
+        "task": "retry_exchange_quote_failures",
+        "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
+        "args": ("bse",),
+        "options": {"queue": "bse-quotes", "priority": queue_priority(3)},
+    },
     "fast-yahoo-quote-batches": {
         "task": "refresh_yahoo_quote_batch",
         "schedule": crontab(minute="*", hour="9-16", day_of_week="mon-fri"),
@@ -170,9 +213,19 @@ celery_app.conf.beat_schedule = {
     }
 }
 
-if not LEGACY_MARKET_JOBS_ENABLED:
-    celery_app.conf.beat_schedule = {
-        name: schedule
-        for name, schedule in celery_app.conf.beat_schedule.items()
-        if name.startswith("fast-")
-    }
+celery_app.conf.beat_schedule = {
+    name: schedule
+    for name, schedule in celery_app.conf.beat_schedule.items()
+    if (
+        name.startswith("fast-nse-")
+        and EXCHANGE_MARKET_JOBS_ENABLED
+        and NSE_MARKET_JOBS_ENABLED
+    )
+    or (
+        name.startswith("fast-bse-")
+        and EXCHANGE_MARKET_JOBS_ENABLED
+        and BSE_MARKET_JOBS_ENABLED
+    )
+    or (name.startswith("fast-yahoo-") and YAHOO_MARKET_JOBS_ENABLED)
+    or (not name.startswith("fast-") and LEGACY_MARKET_JOBS_ENABLED)
+}
