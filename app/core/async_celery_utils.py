@@ -4657,6 +4657,7 @@ def process_past_block_deal_batch(self, block_deals):
 
     try:
         market_deals = []
+        seen_in_batch = set()
 
         for item in block_deals:
             try:
@@ -4665,33 +4666,41 @@ def process_past_block_deal_batch(self, block_deals):
                 if not company_id:
                     continue
 
+                date_raw = (
+                    item.get("Date ", "")
+                    or item.get("Date", "")
+                    or ""
+                ).strip()
+
+                if not date_raw:
+                    continue
 
                 trade_date = datetime.strptime(
-                    item.get("Date ", "").strip(),
+                    date_raw,
                     "%d-%b-%Y"
                 ).date()
 
-
                 symbol = (
                     item.get("Symbol ", "")
+                    or item.get("Symbol", "")
                     or ""
                 ).strip()
-
 
                 client_name = (
                     item.get("Client Name ", "")
+                    or item.get("Client Name", "")
                     or ""
                 ).strip()
 
-
                 buy_sell = (
                     item.get("Buy / Sell ", "")
+                    or item.get("Buy / Sell", "")
                     or ""
                 ).strip().upper()
 
-
                 quantity_raw = (
                     item.get("Quantity Traded ", "")
+                    or item.get("Quantity Traded", "")
                     or ""
                 )
 
@@ -4699,25 +4708,63 @@ def process_past_block_deal_batch(self, block_deals):
                     str(quantity_raw)
                     .replace(",", "")
                     .strip()
-                ) if quantity_raw else None
-
+                ) if quantity_raw and str(quantity_raw).replace(",", "").strip().lstrip("-").isdigit() else None
 
                 price_raw = (
                     item.get(
                         "Trade Price / Wght. Avg. Price ",
                         ""
                     )
+                    or item.get("Trade Price / Wght. Avg. Price", "")
                     or ""
                 )
 
-                price = float(
-                    str(price_raw)
-                    .replace(",", "")
-                    .strip()
-                ) if price_raw else None
-
+                try:
+                    price = float(
+                        str(price_raw)
+                        .replace(",", "")
+                        .strip()
+                    ) if price_raw else None
+                except (ValueError, TypeError):
+                    price = None
 
                 value = None
+
+                # Check duplicate in current batch
+                deal_signature = (
+                    company_id,
+                    "BLOCK",
+                    trade_date,
+                    symbol,
+                    client_name,
+                    buy_sell,
+                    quantity,
+                    price,
+                    "NSE",
+                )
+                if deal_signature in seen_in_batch:
+                    continue
+                seen_in_batch.add(deal_signature)
+
+                # Check duplicate in database
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "BLOCK",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.buy_sell == buy_sell,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.price == price,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
 
                 market_deals.append({
                     "company_id": company_id,
@@ -4758,7 +4805,15 @@ def process_past_block_deal_batch(self, block_deals):
         db.close()
 
 async def fetch_past_block_deal_async():
+    from app.db.redis.redis import redis_client_1
+
+    redis_prefix = "fetch_past_block_deal"
+    proc_key = f"{redis_prefix}:processed_symbols"
+    current_key = f"{redis_prefix}:current_processed_symbols"
+    err_key = f"{redis_prefix}:error"
+
     db = SessionLocalSync()
+    started_symbols = []
     try:
         companies = (
             db.query(CompanyStock.id, CompanyStock.nse_symbol)
@@ -4771,6 +4826,13 @@ async def fetch_past_block_deal_async():
             for company_id, symbol in companies
             if symbol
         }
+
+        started_symbols = list(company_map.keys())
+
+        # Store currently processing symbols in Redis without expiration
+        if started_symbols:
+            for i in range(0, len(started_symbols), 1000):
+                redis_client_1.sadd(current_key, *started_symbols[i:i + 1000])
 
         today = bdate.today()
         date_ranges = []
@@ -4798,6 +4860,9 @@ async def fetch_past_block_deal_async():
         })
 
         all_block_deals = []
+        error_symbols = set()
+        deal_symbols = set()
+
         for c_date in date_ranges:
             block_deals = await main_block_deals({
                 "optionType": "block_deals",
@@ -4812,31 +4877,89 @@ async def fetch_past_block_deal_async():
             # 4. Add company_id to every record
             # -----------------------------------------
             for deal in block_deals:
-                symbol = (
-                        deal.get("Symbol")
-                        or deal.get("Symbol ")
-                        or ""
-                ).strip().upper()
+                try:
+                    symbol = (
+                            deal.get("Symbol")
+                            or deal.get("Symbol ")
+                            or ""
+                    ).strip().upper()
 
-                company_id = company_map.get(symbol)
+                    if not symbol:
+                        continue
 
-                deal["company_id"] = company_id
+                    company_id = company_map.get(symbol)
 
-                all_block_deals.append(deal)
+                    if not company_id:
+                        # Ignore symbols that are not in the database
+                        continue
 
+                    deal["company_id"] = company_id
+                    deal_symbols.add(symbol)
+                    all_block_deals.append(deal)
+
+                except Exception as deal_err:
+                    print(f"Error processing deal {deal}: {deal_err}")
+                    if symbol and symbol in company_map:
+                        error_symbols.add(symbol)
+
+        # Update any database error symbols in Redis without expiration
+        if error_symbols:
+            err_list = list(error_symbols)
+            for i in range(0, len(err_list), 1000):
+                chunk = err_list[i:i + 1000]
+                redis_client_1.sadd(err_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
 
         if all_block_deals:
             for i in range(0, len(all_block_deals), BULK_BLOCK_DEAL_GROUP_SIZE):
                 batch = all_block_deals[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+                batch_symbols = {
+                    (d.get("Symbol") or d.get("Symbol ") or "").strip().upper()
+                    for d in batch
+                    if (d.get("Symbol") or d.get("Symbol "))
+                }
+                batch_symbols.discard("")
 
                 print(
                     f"Batch {i // CHART_GROUP_SIZE + 1}: "
                     f"{len(batch)} records"
                 )
 
-                process_past_block_deal_batch.delay(
-                    batch
-                )
+                try:
+                    process_past_block_deal_batch.delay(
+                        batch
+                    )
+                except Exception as batch_err:
+                    print(f"Error dispatching batch to Celery: {batch_err}")
+                    failed_db_symbols = {s for s in batch_symbols if s in company_map}
+                    if failed_db_symbols:
+                        error_symbols.update(failed_db_symbols)
+                        b_list = list(failed_db_symbols)
+                        for b_i in range(0, len(b_list), 1000):
+                            chunk = b_list[b_i:b_i + 1000]
+                            redis_client_1.sadd(err_key, *chunk)
+                            redis_client_1.srem(current_key, *chunk)
+
+        # Store successful symbols in Redis without expiration
+        success_symbols = (set(started_symbols) | deal_symbols) - error_symbols
+        if success_symbols:
+            success_list = list(success_symbols)
+            for i in range(0, len(success_list), 1000):
+                chunk = success_list[i:i + 1000]
+                redis_client_1.sadd(proc_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
+
+        redis_client_1.delete(current_key)
+
+    except Exception as e:
+        try:
+            if started_symbols:
+                for i in range(0, len(started_symbols), 1000):
+                    redis_client_1.srem(current_key, *started_symbols[i:i + 1000])
+            redis_client_1.delete(current_key)
+        except Exception as redis_err:
+            print(f"Error removing current_processed_symbols from Redis: {redis_err}")
+        raise e
 
     finally:
         db.close()
@@ -5029,6 +5152,7 @@ def process_past_bulk_deal_batch(self, block_deals):
 
     try:
         market_deals = []
+        seen_in_batch = set()
 
         for item in block_deals:
             try:
@@ -5037,33 +5161,41 @@ def process_past_bulk_deal_batch(self, block_deals):
                 if not company_id:
                     continue
 
+                date_raw = (
+                    item.get("Date ", "")
+                    or item.get("Date", "")
+                    or ""
+                ).strip()
+
+                if not date_raw:
+                    continue
 
                 trade_date = datetime.strptime(
-                    item.get("Date ", "").strip(),
+                    date_raw,
                     "%d-%b-%Y"
                 ).date()
 
-
                 symbol = (
                     item.get("Symbol ", "")
+                    or item.get("Symbol", "")
                     or ""
                 ).strip()
-
 
                 client_name = (
                     item.get("Client Name ", "")
+                    or item.get("Client Name", "")
                     or ""
                 ).strip()
 
-
                 buy_sell = (
                     item.get("Buy / Sell ", "")
+                    or item.get("Buy / Sell", "")
                     or ""
                 ).strip().upper()
 
-
                 quantity_raw = (
                     item.get("Quantity Traded ", "")
+                    or item.get("Quantity Traded", "")
                     or ""
                 )
 
@@ -5071,25 +5203,63 @@ def process_past_bulk_deal_batch(self, block_deals):
                     str(quantity_raw)
                     .replace(",", "")
                     .strip()
-                ) if quantity_raw else None
-
+                ) if quantity_raw and str(quantity_raw).replace(",", "").strip().lstrip("-").isdigit() else None
 
                 price_raw = (
                     item.get(
                         "Trade Price / Wght. Avg. Price ",
                         ""
                     )
+                    or item.get("Trade Price / Wght. Avg. Price", "")
                     or ""
                 )
 
-                price = float(
-                    str(price_raw)
-                    .replace(",", "")
-                    .strip()
-                ) if price_raw else None
-
+                try:
+                    price = float(
+                        str(price_raw)
+                        .replace(",", "")
+                        .strip()
+                    ) if price_raw else None
+                except (ValueError, TypeError):
+                    price = None
 
                 value = None
+
+                # Check duplicate in current batch
+                deal_signature = (
+                    company_id,
+                    "BULK",
+                    trade_date,
+                    symbol,
+                    client_name,
+                    buy_sell,
+                    quantity,
+                    price,
+                    "NSE",
+                )
+                if deal_signature in seen_in_batch:
+                    continue
+                seen_in_batch.add(deal_signature)
+
+                # Check duplicate in database
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "BULK",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.buy_sell == buy_sell,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.price == price,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
 
                 market_deals.append({
                     "company_id": company_id,
@@ -5130,7 +5300,15 @@ def process_past_bulk_deal_batch(self, block_deals):
         db.close()
 
 async def fetch_past_bulk_deal_async():
+    from app.db.redis.redis import redis_client_1
+
+    redis_prefix = "fetch_past_bulk_deal"
+    proc_key = f"{redis_prefix}:processed_symbols"
+    current_key = f"{redis_prefix}:current_processed_symbols"
+    err_key = f"{redis_prefix}:error"
+
     db = SessionLocalSync()
+    started_symbols = []
     try:
         companies = (
             db.query(CompanyStock.id, CompanyStock.nse_symbol)
@@ -5143,6 +5321,13 @@ async def fetch_past_bulk_deal_async():
             for company_id, symbol in companies
             if symbol
         }
+
+        started_symbols = list(company_map.keys())
+
+        # Store currently processing symbols in Redis without expiration
+        if started_symbols:
+            for i in range(0, len(started_symbols), 1000):
+                redis_client_1.sadd(current_key, *started_symbols[i:i + 1000])
 
         today = bdate.today()
         date_ranges = []
@@ -5170,6 +5355,9 @@ async def fetch_past_bulk_deal_async():
         })
 
         all_block_deals = []
+        error_symbols = set()
+        deal_symbols = set()
+
         for c_date in date_ranges:
             block_deals = await main_block_deals({
                 "optionType": "bulk_deals",
@@ -5184,30 +5372,90 @@ async def fetch_past_bulk_deal_async():
             # 4. Add company_id to every record
             # -----------------------------------------
             for deal in block_deals:
-                symbol = (
-                        deal.get("Symbol")
-                        or deal.get("Symbol ")
-                        or ""
-                ).strip().upper()
+                try:
+                    symbol = (
+                            deal.get("Symbol")
+                            or deal.get("Symbol ")
+                            or ""
+                    ).strip().upper()
 
-                company_id = company_map.get(symbol)
+                    if not symbol:
+                        continue
 
-                deal["company_id"] = company_id
+                    company_id = company_map.get(symbol)
 
-                all_block_deals.append(deal)
+                    if not company_id:
+                        # Ignore symbols not in database
+                        continue
+
+                    deal["company_id"] = company_id
+                    deal_symbols.add(symbol)
+                    all_block_deals.append(deal)
+
+                except Exception as deal_err:
+                    print(f"Error processing deal {deal}: {deal_err}")
+                    if symbol and symbol in company_map:
+                        error_symbols.add(symbol)
+
+        # Update any database error symbols in Redis without expiration
+        if error_symbols:
+            err_list = list(error_symbols)
+            for i in range(0, len(err_list), 1000):
+                chunk = err_list[i:i + 1000]
+                redis_client_1.sadd(err_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
 
         if all_block_deals:
             for i in range(0, len(all_block_deals), BULK_BLOCK_DEAL_GROUP_SIZE):
                 batch = all_block_deals[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+                batch_symbols = {
+                    (d.get("Symbol") or d.get("Symbol ") or "").strip().upper()
+                    for d in batch
+                    if (d.get("Symbol") or d.get("Symbol "))
+                }
+                batch_symbols.discard("")
 
                 print(
                     f"Batch {i // CHART_GROUP_SIZE + 1}: "
                     f"{len(batch)} records"
                 )
 
-                process_past_bulk_deal_batch.delay(
-                    batch
-                )
+                try:
+                    process_past_bulk_deal_batch.delay(
+                        batch
+                    )
+                except Exception as batch_err:
+                    print(f"Error dispatching batch to Celery: {batch_err}")
+                    failed_db_symbols = {s for s in batch_symbols if s in company_map}
+                    if failed_db_symbols:
+                        error_symbols.update(failed_db_symbols)
+                        b_list = list(failed_db_symbols)
+                        for b_i in range(0, len(b_list), 1000):
+                            chunk = b_list[b_i:b_i + 1000]
+                            redis_client_1.sadd(err_key, *chunk)
+                            redis_client_1.srem(current_key, *chunk)
+
+        # Store successful symbols in Redis without expiration
+        success_symbols = (set(started_symbols) | deal_symbols) - error_symbols
+        if success_symbols:
+            success_list = list(success_symbols)
+            for i in range(0, len(success_list), 1000):
+                chunk = success_list[i:i + 1000]
+                redis_client_1.sadd(proc_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
+
+        # Remove any remaining from current_processed_symbols
+        redis_client_1.delete(current_key)
+
+    except Exception as e:
+        try:
+            if started_symbols:
+                for i in range(0, len(started_symbols), 1000):
+                    redis_client_1.srem(current_key, *started_symbols[i:i + 1000])
+            redis_client_1.delete(current_key)
+        except Exception as redis_err:
+            print(f"Error removing current_processed_symbols from Redis: {redis_err}")
+        raise e
 
     finally:
         db.close()
@@ -5400,6 +5648,7 @@ def process_past_short_selling_batch(self, block_deals):
 
     try:
         market_deals = []
+        seen_in_batch = set()
 
         for item in block_deals:
             try:
@@ -5408,29 +5657,39 @@ def process_past_short_selling_batch(self, block_deals):
                 if not company_id:
                     continue
 
+                date_str = (
+                    item.get("Date ", "")
+                    or item.get("Date", "")
+                    or ""
+                ).strip()
+
+                if not date_str:
+                    continue
 
                 trade_date = datetime.strptime(
-                    item.get("Date ", "").strip(),
+                    date_str,
                     "%d-%b-%Y"
                 ).date()
 
-
                 symbol = (
                     item.get("Symbol ", "")
+                    or item.get("Symbol", "")
                     or ""
                 ).strip()
-
 
                 client_name = (
                     item.get("Security Name ", "")
+                    or item.get("Security Name", "")
+                    or item.get("Client Name ", "")
+                    or item.get("Client Name", "")
                     or ""
                 ).strip()
-
 
                 buy_sell = None
 
                 quantity_raw = (
                     item.get("Quantity ", "")
+                    or item.get("Quantity", "")
                     or ""
                 )
 
@@ -5440,9 +5699,32 @@ def process_past_short_selling_batch(self, block_deals):
                     .strip()
                 ) if quantity_raw else None
 
-
                 price = None
                 value = None
+
+                # Check duplicate within the current batch
+                deal_key = (company_id, trade_date, symbol, client_name, quantity)
+                if deal_key in seen_in_batch:
+                    continue
+                seen_in_batch.add(deal_key)
+
+                # Check duplicate in database
+                existing_deal = db.execute(
+                    select(MarketDeal.id)
+                    .where(
+                        MarketDeal.company_id == company_id,
+                        MarketDeal.deal_type == "SHORT_SELLING",
+                        MarketDeal.trade_date == trade_date,
+                        MarketDeal.symbol == symbol,
+                        MarketDeal.client_name == client_name,
+                        MarketDeal.quantity == quantity,
+                        MarketDeal.exchange == "NSE",
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                if existing_deal:
+                    continue
 
                 market_deals.append({
                     "company_id": company_id,
@@ -5459,7 +5741,7 @@ def process_past_short_selling_batch(self, block_deals):
 
             except Exception as e:
                 print(
-                    f"Failed block deal: {item} | Error: {e}"
+                    f"Failed short selling deal: {item} | Error: {e}"
                 )
 
         if market_deals:
@@ -5468,7 +5750,7 @@ def process_past_short_selling_batch(self, block_deals):
             db.commit()
 
         print(
-            f"Inserted {len(market_deals)} block deals"
+            f"Inserted {len(market_deals)} new short selling deals"
         )
 
         return {
@@ -5483,7 +5765,15 @@ def process_past_short_selling_batch(self, block_deals):
         db.close()
 
 async def fetch_past_short_selling_async():
+    from app.db.redis.redis import redis_client_1
+
+    redis_prefix = "fetch_past_short_selling"
+    proc_key = f"{redis_prefix}:processed_symbols"
+    current_key = f"{redis_prefix}:current_processed_symbols"
+    err_key = f"{redis_prefix}:error"
+
     db = SessionLocalSync()
+    started_symbols = []
     try:
         companies = (
             db.query(CompanyStock.id, CompanyStock.nse_symbol)
@@ -5496,6 +5786,13 @@ async def fetch_past_short_selling_async():
             for company_id, symbol in companies
             if symbol
         }
+
+        started_symbols = list(company_map.keys())
+
+        # Store currently processing symbols in Redis without expiration
+        if started_symbols:
+            for i in range(0, len(started_symbols), 1000):
+                redis_client_1.sadd(current_key, *started_symbols[i:i + 1000])
 
         today = bdate.today()
         date_ranges = []
@@ -5523,6 +5820,9 @@ async def fetch_past_short_selling_async():
         })
 
         all_short_sellings = []
+        error_symbols = set()
+        deal_symbols = set()
+
         for c_date in date_ranges:
             short_sellings = await main_block_deals({
                 "optionType": "short_selling",
@@ -5537,30 +5837,90 @@ async def fetch_past_short_selling_async():
             # 4. Add company_id to every record
             # -----------------------------------------
             for deal in short_sellings:
-                symbol = (
-                        deal.get("Symbol")
-                        or deal.get("Symbol ")
-                        or ""
-                ).strip().upper()
+                try:
+                    symbol = (
+                            deal.get("Symbol")
+                            or deal.get("Symbol ")
+                            or ""
+                    ).strip().upper()
 
-                company_id = company_map.get(symbol)
+                    if not symbol:
+                        continue
 
-                deal["company_id"] = company_id
+                    company_id = company_map.get(symbol)
 
-                all_short_sellings.append(deal)
+                    if not company_id:
+                        # Ignore symbols not in database
+                        continue
+
+                    deal["company_id"] = company_id
+                    deal_symbols.add(symbol)
+                    all_short_sellings.append(deal)
+
+                except Exception as deal_err:
+                    print(f"Error processing deal {deal}: {deal_err}")
+                    if symbol and symbol in company_map:
+                        error_symbols.add(symbol)
+
+        # Update any database error symbols in Redis without expiration
+        if error_symbols:
+            err_list = list(error_symbols)
+            for i in range(0, len(err_list), 1000):
+                chunk = err_list[i:i + 1000]
+                redis_client_1.sadd(err_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
 
         if all_short_sellings:
             for i in range(0, len(all_short_sellings), BULK_BLOCK_DEAL_GROUP_SIZE):
                 batch = all_short_sellings[i:i + BULK_BLOCK_DEAL_GROUP_SIZE]
+                batch_symbols = {
+                    (d.get("Symbol") or d.get("Symbol ") or "").strip().upper()
+                    for d in batch
+                    if (d.get("Symbol") or d.get("Symbol "))
+                }
+                batch_symbols.discard("")
 
                 print(
                     f"Batch {i // CHART_GROUP_SIZE + 1}: "
                     f"{len(batch)} records"
                 )
 
-                process_past_short_selling_batch.delay(
-                    batch
-                )
+                try:
+                    process_past_short_selling_batch.delay(
+                        batch
+                    )
+                except Exception as batch_err:
+                    print(f"Error dispatching batch to Celery: {batch_err}")
+                    failed_db_symbols = {s for s in batch_symbols if s in company_map}
+                    if failed_db_symbols:
+                        error_symbols.update(failed_db_symbols)
+                        b_list = list(failed_db_symbols)
+                        for b_i in range(0, len(b_list), 1000):
+                            chunk = b_list[b_i:b_i + 1000]
+                            redis_client_1.sadd(err_key, *chunk)
+                            redis_client_1.srem(current_key, *chunk)
+
+        # Store successful symbols in Redis without expiration
+        success_symbols = (set(started_symbols) | deal_symbols) - error_symbols
+        if success_symbols:
+            success_list = list(success_symbols)
+            for i in range(0, len(success_list), 1000):
+                chunk = success_list[i:i + 1000]
+                redis_client_1.sadd(proc_key, *chunk)
+                redis_client_1.srem(current_key, *chunk)
+
+        # Remove any remaining from current_processed_symbols
+        redis_client_1.delete(current_key)
+
+    except Exception as e:
+        try:
+            if started_symbols:
+                for i in range(0, len(started_symbols), 1000):
+                    redis_client_1.srem(current_key, *started_symbols[i:i + 1000])
+            redis_client_1.delete(current_key)
+        except Exception as redis_err:
+            print(f"Error removing current_processed_symbols from Redis: {redis_err}")
+        raise e
 
     finally:
         db.close()
