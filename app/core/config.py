@@ -1,24 +1,26 @@
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     app_name: str = "StockAnalysis Screener API"
     environment: str = "local"
-    debug: bool = True
+    debug: bool = False
 
     # Database
     postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "stock_announcement"
-    postgres_user: str = "postgres"
-    postgres_password: str = "postgres"
+    postgres_db: str = "stock_screener"
+    postgres_user: str = "stock_apps"
+    postgres_password: str
     otp_valid_window: str = "60"
-    is_production: bool = True
+    is_production: bool = False
     access_token_expire_minutes: str = '60'
     refresh_token_expire_days: str = '30'
-    secret_key: str = "jhsgdjsgdjgshgdfsdkljlkjdfjklfsdkf"
+    secret_key: str
     ANGLE_ONE_API_KEY: str
     ANGLE_ONE_CLIENT_ID: str
     ANGLE_ONE_CLIENT_CODE: str
@@ -26,6 +28,60 @@ class Settings(BaseSettings):
     ANGLE_ONE_TOTP_SECRET: str
     SCRAPINGBEE_API_KEY: str
     EXTERNAL_DATABASE_URL: str
+    yahoo_concurrency: int = 12
+    yahoo_batch_size: int = 500
+    yahoo_timeout_seconds: int = 15
+    yahoo_retries: int = 3
+    yahoo_requests_per_second: int = 10
+    yahoo_symbol_quarantine_seconds: int = 604800
+    nse_requests_per_second: int = 4
+    bse_requests_per_second: int = 4
+    nse_concurrency: int = 6
+    bse_concurrency: int = 4
+    nse_shard_count: int = 6
+    bse_shard_count: int = 2
+    exchange_shard_size: int = 100
+    exchange_retry_batch_size: int = 100
+    exchange_max_retry_attempts: int = 3
+    exchange_symbol_quarantine_seconds: int = 86400
+    exchange_timeout_seconds: int = 15
+    exchange_retries: int = 3
+    nse_direct_max_concurrency: int = 8
+    bse_direct_max_concurrency: int = 4
+    nse_proxy_1_url: str = ""
+    nse_proxy_2_url: str = ""
+    nse_proxy_3_url: str = ""
+    nse_proxy_4_url: str = ""
+    bse_proxy_1_url: str = ""
+    bse_proxy_2_url: str = ""
+    bse_proxy_3_url: str = ""
+    bse_proxy_4_url: str = ""
+    market_shard_count: int = 8
+    market_shard_size: int = 250
+    market_retry_batch_size: int = 250
+    market_max_retry_attempts: int = 3
+    screener_worker_concurrency: int = 8
+    screener_proxy_config: str = "config/proxies.json"
+    proxy_failure_threshold: int
+    proxy_cooldown_seconds: int
+    proxy_lease_ttl_seconds: int
+    proxy_acquire_timeout_seconds: float
+    yahoo_direct_max_concurrency: int
+    celery_broker_url: str
+    celery_result_backend: str
+    enable_legacy_market_jobs: bool = False
+    enable_exchange_market_jobs: bool = True
+    enable_yahoo_market_jobs: bool = False
+    enable_nse_market_jobs: bool = True
+    enable_bse_market_jobs: bool = False
+    database_pool_size: int = 5
+    database_max_overflow: int = 5
+    database_pool_timeout_seconds: int = 30
+    database_pool_recycle_seconds: int = 1800
+    redis_url: str = "redis://localhost:6379/0"
+    redis_secondary_url: str = "redis://localhost:6379/10"
+    api_rate_limit_per_minute: int = 600
+    api_max_concurrency: int = 50
 
     @property
     def database_url(self) -> str:
@@ -33,11 +89,6 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-
 
 @lru_cache
 def get_settings() -> Settings:

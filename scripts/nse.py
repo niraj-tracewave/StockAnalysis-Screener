@@ -1,6 +1,12 @@
 import aiohttp
 import asyncio
+import os
+import random
+import time
 import ujson
+from aiolimiter import AsyncLimiter
+
+from app.core.proxy_pool import load_proxy_pool
 
 
 class FastNSEClient:
@@ -8,6 +14,11 @@ class FastNSEClient:
 
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
+        self.proxy_pool = load_proxy_pool("nse", default_concurrency=4)
+        self.rate_limiter = AsyncLimiter(
+            max(1, int(os.environ.get("NSE_REQUESTS_PER_SECOND", "4"))),
+            time_period=1,
+        )
 
     async def init(self):
         # Ultra-fast TCP connector tuning
@@ -41,31 +52,43 @@ class FastNSEClient:
             }
         )
 
-        # Get cookies fast without downloading large content
-        async with self.session.get("https://www.nseindia.com", allow_redirects=True):
-            pass
-
     async def close(self):
-        await self.session.close()
+        if self.session:
+            await self.session.close()
+        await self.proxy_pool.close()
 
     async def _call(self, params: dict, safe=False):
-        try:
-            async with self.session.get(self.BASE, params=params) as r:
-                if not safe:
-                    r.raise_for_status()
-                    return await r.json(loads=ujson.loads)
-
-                # Safe mode
-                try:
-                    r.raise_for_status()
-                    return await r.json(loads=ujson.loads)
-                except:
-                    return None
-
-        except:
-            if safe: 
-                return None
-            raise
+        if not self.session:
+            raise RuntimeError("FastNSEClient.init() must be called first")
+        retries = max(1, int(os.environ.get("EXCHANGE_RETRIES", "3")))
+        last_error = None
+        for attempt in range(retries):
+            try:
+                async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
+                    started = time.monotonic()
+                    try:
+                        async with self.session.get(
+                            self.BASE,
+                            params=params,
+                            proxy=endpoint.url,
+                        ) as response:
+                            response.raise_for_status()
+                            result = await response.json(loads=ujson.loads, content_type=None)
+                            await self.proxy_pool.success(
+                                endpoint,
+                                latency_ms=(time.monotonic() - started) * 1000,
+                            )
+                            return result
+                    except Exception as exc:
+                        last_error = exc
+                        await self.proxy_pool.failure(endpoint, type(exc).__name__)
+            except Exception as exc:
+                last_error = exc
+            if attempt + 1 < retries:
+                await asyncio.sleep((0.35 * (2**attempt)) + random.random() * 0.25)
+        if safe:
+            return None
+        raise last_error or RuntimeError("NSE request failed")
 
     # --- Basic API wrappers ---
     async def n(self, s): return await self._call({"functionName": "getSymbolName", "symbol": s})

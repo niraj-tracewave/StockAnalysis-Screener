@@ -54,6 +54,19 @@ class CompanyStock(Base):
         comment="NSE stock code"
     )
 
+    yahoo_symbol = Column(
+        String(40),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
+
+    primary_exchange = Column(
+        String(10),
+        index=True,
+        nullable=True,
+    )
+
     macro_economic_sector = Column(
         String,
         nullable=True,
@@ -175,6 +188,9 @@ class KeyDetailsForCS(Base):
     roe = Column(Float, nullable=True)
     face_value = Column(Float, nullable=True)
 
+    data_source = Column(String(30), nullable=True)
+    market_data_updated_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
     about = Column(JSONB, nullable=True)
     key_points = Column(JSONB, nullable=True)
     pros = Column(JSONB, nullable=True)
@@ -183,6 +199,10 @@ class KeyDetailsForCS(Base):
     company = relationship(
         "CompanyStock",
         back_populates="details"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_key_details_for_cs_company_id"),
     )
 
 class ChartDataset(Base):

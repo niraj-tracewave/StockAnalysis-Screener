@@ -1,8 +1,10 @@
 import logging
 from logging.config import dictConfig
+from pathlib import Path
 
 
 def setup_logging() -> None:
+    Path("logs").mkdir(parents=True, exist_ok=True)
     logging_config = {
         "version": 1,
         "disable_existing_loggers": False,

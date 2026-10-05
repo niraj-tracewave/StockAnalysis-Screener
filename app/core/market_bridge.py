@@ -1,7 +1,6 @@
 import asyncio
 import json
 
-from app.core.angel_ws import AngelWSClient
 from app.apis.v1.websockets.manager import manager
 
 # angel = AngelWSClient(

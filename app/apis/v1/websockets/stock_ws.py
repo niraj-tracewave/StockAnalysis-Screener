@@ -1,3 +1,4 @@
+import asyncio
 import json
 from fastapi import APIRouter, WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -80,7 +81,7 @@ async def ws_stock(ws: WebSocket, user_id: str):
 
     # 🔥 FIRST USER CONNECTED → START ANGEL
     if manager.count() == 1:
-        angel = get_angel()
+        angel = await asyncio.to_thread(get_angel)
         if angel is None:
             print("⚠️ Broker unavailable. Closing socket.")
             await ws.close()
@@ -104,6 +105,6 @@ async def ws_stock(ws: WebSocket, user_id: str):
 
         # 🔥 LAST USER DISCONNECTED → STOP ANGEL
         if manager.count() == 0:
-            angel = get_angel()
+            angel = await asyncio.to_thread(get_angel)
             angel.should_run = False
             angel.unsubscribe_all()

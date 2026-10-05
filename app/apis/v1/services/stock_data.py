@@ -456,6 +456,8 @@ class CompanyStockFetchService:
                 "bse_code": company.bse_code,
                 "nse_code": company.nse_code,
                 "nse_symbol": company.nse_symbol,
+                "yahoo_symbol": company.yahoo_symbol,
+                "primary_exchange": company.primary_exchange,
                 "macro_economic_sector": company.macro_economic_sector,
                 "sector": company.sector,
                 "industry": company.industry,
@@ -475,6 +477,12 @@ class CompanyStockFetchService:
                     "key_points": details.key_points if details else None,
                     "pros": details.pros if details else None,
                     "cons": details.cons if details else None,
+                    "data_source": details.data_source if details else None,
+                    "market_data_updated_at": (
+                        details.market_data_updated_at.isoformat()
+                        if details and details.market_data_updated_at
+                        else None
+                    ),
                 } if details else None,
                 "chart": one_month_charts,
                 "quarterly_result": quarterly_result,
@@ -796,6 +804,8 @@ class CompanyStockFetchService:
                 "bse_code": company.bse_code,
                 "nse_code": company.nse_code,
                 "nse_symbol": company.nse_symbol,
+                "yahoo_symbol": company.yahoo_symbol,
+                "primary_exchange": company.primary_exchange,
                 "macro_economic_sector": company.macro_economic_sector,
                 "sector": company.sector,
                 "industry": company.industry,
@@ -816,6 +826,12 @@ class CompanyStockFetchService:
                     "key_points": details.key_points if details else None,
                     "pros": details.pros if details else None,
                     "cons": details.cons if details else None,
+                    "data_source": details.data_source if details else None,
+                    "market_data_updated_at": (
+                        details.market_data_updated_at.isoformat()
+                        if details and details.market_data_updated_at
+                        else None
+                    ),
                 } if details else None,
 
                 "chart": one_month_charts,
