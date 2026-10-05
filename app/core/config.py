@@ -4,7 +4,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "StockAnalysis Screener API"
     environment: str = "local"
@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     market_max_retry_attempts: int = 3
     screener_worker_concurrency: int = 8
     screener_proxy_config: str = "config/proxies.json"
+    proxy_failure_threshold: int
+    proxy_cooldown_seconds: int
+    proxy_lease_ttl_seconds: int
+    proxy_acquire_timeout_seconds: float
+    yahoo_direct_max_concurrency: int
+    celery_broker_url: str
+    celery_result_backend: str
     enable_legacy_market_jobs: bool = False
     enable_exchange_market_jobs: bool = True
     enable_yahoo_market_jobs: bool = False
