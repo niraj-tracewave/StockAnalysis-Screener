@@ -951,60 +951,121 @@ async def fetch_stock_quarterly_result_data_async():
         await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
         await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
 
-async def update_nse_bse_scrip_code_async():
+async def update_nse_bse_scrip_code_async(limit: int | None = None):
     db = SessionLocalSync()
-    stmt = (
-        select(CompanyStock)
-        .execution_options(yield_per=100)
-    )
+    current_run_symbols = set()
+    try:
+        from app.core import utils
+        if not utils.ANGEL_NSE_MAP:
+            utils.load_angel_map()
 
-    result = db.execute(stmt)
-    # companies = result.scalars().all()
-    processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
-    new_process_symbol = []
-    # unprocessed_companies = [
-    #     c for c in companies if c.nse_symbol not in processed_symbols
-    # ][:25]
-    unprocessed_companies = []
-    for c in result.scalars():
-        if c.nse_symbol not in processed_symbols:
-            unprocessed_companies.append(c)
-            if len(unprocessed_companies) == 25:
-                break
-    started_symbols = [c.nse_symbol for c in unprocessed_companies]
-    await update_nse_bse_scrip_code_save_processed_symbol(started_symbols, "current_processed_symbols")
-    for company in unprocessed_companies:
+        stmt = select(CompanyStock).execution_options(yield_per=100)
+        result = db.execute(stmt)
+        processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
+
+        unprocessed_companies = []
+        for c in result.scalars():
+            if c.nse_symbol and c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if limit and len(unprocessed_companies) >= limit:
+                    break
+
+        if not unprocessed_companies:
+            print("All symbols have already been processed for update_nse_bse_scrip_code.")
+            return
+
+        print(f"Total unprocessed companies to process for scrip code: {len(unprocessed_companies)}")
+
+        semaphore = asyncio.Semaphore(15)
+
+        async def resolve_codes_for_company(company):
+            symbol = company.nse_symbol
+            if not symbol:
+                return company, None, None
+
+            # 1. BSE code directly from in-memory Angel map
+            bse_code = utils.ANGEL_NSE_MAP.get(symbol) or company.bse_code
+
+            # 2. NSE code: Check in-memory Angel map first for standard series (-EQ, -BE, -BZ, -SM)
+            nse_code = (
+                utils.ANGEL_NSE_MAP.get(f"{symbol}-EQ")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-BE")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-BZ")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-SM")
+            )
+
+            # 3. If nse_code not found in memory, query NSE website
+            if not nse_code:
+                async with semaphore:
+                    try:
+                        nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                        if nse_company_list:
+                            nse_code = nse_company_list[0].get("nse_code")
+                    except Exception as err:
+                        print(f"Error fetching NSE data for {symbol}: {err}")
+
+            nse_code = nse_code or company.nse_code
+            return company, nse_code, bse_code
+
+        STREAM_CHUNK = 100
+        for i in range(0, len(unprocessed_companies), STREAM_CHUNK):
+            company_slice = unprocessed_companies[i : i + STREAM_CHUNK]
+            slice_symbols = [c.nse_symbol for c in company_slice]
+            current_run_symbols.update(slice_symbols)
+            await update_nse_bse_scrip_code_save_processed_symbol(
+                slice_symbols, "current_processed_symbols"
+            )
+
+            tasks = [resolve_codes_for_company(comp) for comp in company_slice]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            chunk_success = []
+            chunk_failed = []
+
+            for comp, res in zip(company_slice, results):
+                if isinstance(res, Exception) or not res:
+                    chunk_failed.append(comp.nse_symbol)
+                    continue
+                _, nse_code, bse_code = res
+                try:
+                    comp.bse_code = bse_code
+                    comp.nse_code = nse_code
+                    chunk_success.append(comp.nse_symbol)
+                except Exception as row_err:
+                    print(f"Error updating company {comp.nse_symbol}: {row_err}")
+                    chunk_failed.append(comp.nse_symbol)
+
+            try:
+                db.commit()
+                if chunk_success:
+                    current_run_symbols.difference_update(chunk_success)
+                    await update_nse_bse_scrip_code_save_processed_symbol(
+                        chunk_success, "processed_symbols"
+                    )
+            except Exception as commit_err:
+                db.rollback()
+                print(f"Error committing scrip code batch: {commit_err}")
+                chunk_failed.extend(chunk_success)
+                chunk_success = []
+
+            if chunk_failed:
+                current_run_symbols.difference_update(chunk_failed)
+                await update_nse_bse_scrip_code_save_processed_symbol(
+                    chunk_failed, "error"
+                )
+
+    except Exception as main_err:
+        print(f"Error in update_nse_bse_scrip_code_async: {main_err}")
         try:
-            print(f"\nProcessing company: {company.id} | {company.name}")
-            nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-            bse_security_code = await fetch_bse_exact_symbol_data_from_json(company.nse_symbol)
-
-            nse_code = company.nse_code
-            bse_code = company.bse_code
-            if nse_company_list and bse_security_code:
-                platform = "NSE, BSE"
-                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-                bse_code =bse_security_code if bse_security_code else None
-            elif nse_company_list:
-                platform = "NSE"
-                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-            elif bse_security_code:
-                platform = "BSE"
-                bse_code = bse_security_code if bse_security_code else None
-
-            company.bse_code = bse_code
-            company.nse_code = nse_code
-
-            db.commit()
-            new_process_symbol.append(company.nse_symbol)
-
-        except Exception as e:
-            db.rollback()
-            print(f"\nFAILED company: {company.id} | {company.name}")
-            print("Error:", str(e))
-            continue
-    db.close()
-    await update_nse_bse_scrip_code_save_processed_symbol(new_process_symbol, "processed_symbols")
+            if current_run_symbols:
+                await update_nse_bse_scrip_code_save_processed_symbol(
+                    list(current_run_symbols), "remove_processing"
+                )
+        except Exception:
+            pass
+        raise main_err
+    finally:
+        db.close()
 
 
 async def update_nse_bse_stock_information_async():

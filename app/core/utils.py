@@ -2827,54 +2827,45 @@ async def parse_financial_name(text: str):
 
     return result
 
+SCRIP_CODE_REDIS_PREFIX = "update_nse_bse_scrip_code"
+
 async def update_nse_bse_scrip_code_load_processed_symbols():
-    file = "update_nse_bse_scrip_code.json"
-    if os.path.exists(file):
-        with open(file, "r") as f:
-            content = f.read().strip()
-            if not content:
-                return set()
+    try:
+        from app.db.redis.redis import redis_client_1
+        proc_key = f"{SCRIP_CODE_REDIS_PREFIX}:processed_symbols"
+        curr_key = f"{SCRIP_CODE_REDIS_PREFIX}:current_processed_symbols"
+        err_key = f"{SCRIP_CODE_REDIS_PREFIX}:error"
 
-            data = json.loads(content)
+        processed = redis_client_1.smembers(proc_key) or set()
+        current = redis_client_1.smembers(curr_key) or set()
+        error = redis_client_1.smembers(err_key) or set()
+        return set(processed) | set(current) | set(error)
+    except Exception as e:
+        print(f"Error loading scrip code processed symbols from Redis: {e}")
 
-            processed = data.get("processed_symbols", [])
-            current = data.get("current_processed_symbols", [])
-
-            return set(processed) | set(current)
     return set()
 
 async def update_nse_bse_scrip_code_save_processed_symbol(symbols, key):
-    file = "update_nse_bse_scrip_code.json"
+    if not symbols:
+        return
+    try:
+        from app.db.redis.redis import redis_client_1
+        proc_key = f"{SCRIP_CODE_REDIS_PREFIX}:processed_symbols"
+        curr_key = f"{SCRIP_CODE_REDIS_PREFIX}:current_processed_symbols"
+        err_key = f"{SCRIP_CODE_REDIS_PREFIX}:error"
 
-    data = {
-        "processed_symbols": [],
-        "current_processed_symbols": []
-    }
-
-    if os.path.exists(file):
-        try:
-            with open(file, "r") as f:
-                content = f.read().strip()
-                if content:
-                    data = json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-    if key == "current_processed_symbols":
-        data["current_processed_symbols"].extend(symbols)
-        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
-
-    elif key == "processed_symbols":
-        data["processed_symbols"].extend(symbols)
-        data["processed_symbols"] = list(set(data["processed_symbols"]))
-
-        # remove from current
-        current_set = set(data.get("current_processed_symbols", []))
-        current_set -= set(symbols)
-        data["current_processed_symbols"] = list(current_set)
-
-    with open(file, "w") as f:
-        json.dump(data, f, indent=4)
+        if key == "current_processed_symbols":
+            redis_client_1.sadd(curr_key, *symbols)
+        elif key == "processed_symbols":
+            redis_client_1.sadd(proc_key, *symbols)
+            redis_client_1.srem(curr_key, *symbols)
+        elif key == "error":
+            redis_client_1.sadd(err_key, *symbols)
+            redis_client_1.srem(curr_key, *symbols)
+        elif key == "remove_processing":
+            redis_client_1.srem(curr_key, *symbols)
+    except Exception as e:
+        print(f"Error saving scrip code symbols to Redis: {e}")
 
 def get_custom_today_file(file_name):
     today = datetime.now().strftime("%Y-%m-%d")
