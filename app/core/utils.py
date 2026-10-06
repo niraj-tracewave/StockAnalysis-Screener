@@ -7861,6 +7861,9 @@ def update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name):
         try:
             from app.db.redis.redis import redis_client_1
             prefix = file_name[6:] if file_name.startswith("redis:") else file_name
+            # Never delete daily_basic_and_30y_stock_chart_data keys; they must persist and expire at midnight IST
+            if "daily_basic_and_30y_stock_chart_data" in prefix:
+                return 0
             redis_client_1.delete(
                 f"{prefix}:processed_symbols",
                 f"{prefix}:current_processed_symbols",
