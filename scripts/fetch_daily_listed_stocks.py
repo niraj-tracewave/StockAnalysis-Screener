@@ -10,7 +10,7 @@ async def fetch_data():
 
     original_url = f"{nse_newly_listed_stock_url}&listing_date={current_date}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(original_url) as response:
+        async with session.post(original_url) as response:
             response.raise_for_status()
             data = await response.json()
             return data

@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     enable_yahoo_market_jobs: bool = False
     enable_nse_market_jobs: bool = True
     enable_bse_market_jobs: bool = False
+    use_nse_proxy: bool = False
+    use_bse_proxy: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 5
     database_pool_timeout_seconds: int = 30

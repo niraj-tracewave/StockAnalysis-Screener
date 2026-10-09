@@ -3,6 +3,9 @@ import asyncio
 import ujson
 
 
+from scripts.bse import get_dynamic_bse_headers
+
+
 class RawBSEClient:
     BASE = "https://api.bseindia.com/BseIndiaAPI/api"
 
@@ -21,15 +24,7 @@ class RawBSEClient:
         self.session = aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=12, connect=3, sock_read=5),
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/141 Safari/537.36"
-                ),
-                "Accept": "application/json, text/plain, */*",
-                "Referer": "https://www.bseindia.com/",
-            },
+            headers=get_dynamic_bse_headers(),
             json_serialize=ujson.dumps,
         )
 
@@ -39,8 +34,10 @@ class RawBSEClient:
 
     async def _get(self, endpoint, params=None):
         """Return raw JSON response for ANY endpoint."""
+        scripcode = str((params or {}).get("scripcode", "")).strip()
         try:
-            async with self.session.get(f"{self.BASE}/{endpoint}", params=params) as r:
+            headers = get_dynamic_bse_headers(scripcode)
+            async with self.session.get(f"{self.BASE}/{endpoint}", params=params, headers=headers) as r:
                 r.raise_for_status()
                 raw = await r.read()
                 return ujson.loads(raw)
