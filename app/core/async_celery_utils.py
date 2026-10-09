@@ -951,60 +951,121 @@ async def fetch_stock_quarterly_result_data_async():
         await save_quarterly_result_processed_symbol(processed_symbols, "processed_symbols")
         await save_quarterly_result_processed_symbol(current_processed_symbols, "remove_processing")
 
-async def update_nse_bse_scrip_code_async():
+async def update_nse_bse_scrip_code_async(limit: int | None = None):
     db = SessionLocalSync()
-    stmt = (
-        select(CompanyStock)
-        .execution_options(yield_per=100)
-    )
+    current_run_symbols = set()
+    try:
+        from app.core import utils
+        if not utils.ANGEL_NSE_MAP:
+            utils.load_angel_map()
 
-    result = db.execute(stmt)
-    # companies = result.scalars().all()
-    processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
-    new_process_symbol = []
-    # unprocessed_companies = [
-    #     c for c in companies if c.nse_symbol not in processed_symbols
-    # ][:25]
-    unprocessed_companies = []
-    for c in result.scalars():
-        if c.nse_symbol not in processed_symbols:
-            unprocessed_companies.append(c)
-            if len(unprocessed_companies) == 25:
-                break
-    started_symbols = [c.nse_symbol for c in unprocessed_companies]
-    await update_nse_bse_scrip_code_save_processed_symbol(started_symbols, "current_processed_symbols")
-    for company in unprocessed_companies:
+        stmt = select(CompanyStock).execution_options(yield_per=100)
+        result = db.execute(stmt)
+        processed_symbols = await update_nse_bse_scrip_code_load_processed_symbols()
+
+        unprocessed_companies = []
+        for c in result.scalars():
+            if c.nse_symbol and c.nse_symbol not in processed_symbols:
+                unprocessed_companies.append(c)
+                if limit and len(unprocessed_companies) >= limit:
+                    break
+
+        if not unprocessed_companies:
+            print("All symbols have already been processed for update_nse_bse_scrip_code.")
+            return
+
+        print(f"Total unprocessed companies to process for scrip code: {len(unprocessed_companies)}")
+
+        semaphore = asyncio.Semaphore(15)
+
+        async def resolve_codes_for_company(company):
+            symbol = company.nse_symbol
+            if not symbol:
+                return company, None, None
+
+            # 1. BSE code directly from in-memory Angel map
+            bse_code = utils.ANGEL_NSE_MAP.get(symbol) or company.bse_code
+
+            # 2. NSE code: Check in-memory Angel map first for standard series (-EQ, -BE, -BZ, -SM)
+            nse_code = (
+                utils.ANGEL_NSE_MAP.get(f"{symbol}-EQ")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-BE")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-BZ")
+                or utils.ANGEL_NSE_MAP.get(f"{symbol}-SM")
+            )
+
+            # 3. If nse_code not found in memory, query NSE website
+            if not nse_code:
+                async with semaphore:
+                    try:
+                        nse_company_list = await fetch_nse_exact_symbol_data(symbol)
+                        if nse_company_list:
+                            nse_code = nse_company_list[0].get("nse_code")
+                    except Exception as err:
+                        print(f"Error fetching NSE data for {symbol}: {err}")
+
+            nse_code = nse_code or company.nse_code
+            return company, nse_code, bse_code
+
+        STREAM_CHUNK = 100
+        for i in range(0, len(unprocessed_companies), STREAM_CHUNK):
+            company_slice = unprocessed_companies[i : i + STREAM_CHUNK]
+            slice_symbols = [c.nse_symbol for c in company_slice]
+            current_run_symbols.update(slice_symbols)
+            await update_nse_bse_scrip_code_save_processed_symbol(
+                slice_symbols, "current_processed_symbols"
+            )
+
+            tasks = [resolve_codes_for_company(comp) for comp in company_slice]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            chunk_success = []
+            chunk_failed = []
+
+            for comp, res in zip(company_slice, results):
+                if isinstance(res, Exception) or not res:
+                    chunk_failed.append(comp.nse_symbol)
+                    continue
+                _, nse_code, bse_code = res
+                try:
+                    comp.bse_code = bse_code
+                    comp.nse_code = nse_code
+                    chunk_success.append(comp.nse_symbol)
+                except Exception as row_err:
+                    print(f"Error updating company {comp.nse_symbol}: {row_err}")
+                    chunk_failed.append(comp.nse_symbol)
+
+            try:
+                db.commit()
+                if chunk_success:
+                    current_run_symbols.difference_update(chunk_success)
+                    await update_nse_bse_scrip_code_save_processed_symbol(
+                        chunk_success, "processed_symbols"
+                    )
+            except Exception as commit_err:
+                db.rollback()
+                print(f"Error committing scrip code batch: {commit_err}")
+                chunk_failed.extend(chunk_success)
+                chunk_success = []
+
+            if chunk_failed:
+                current_run_symbols.difference_update(chunk_failed)
+                await update_nse_bse_scrip_code_save_processed_symbol(
+                    chunk_failed, "error"
+                )
+
+    except Exception as main_err:
+        print(f"Error in update_nse_bse_scrip_code_async: {main_err}")
         try:
-            print(f"\nProcessing company: {company.id} | {company.name}")
-            nse_company_list = await fetch_nse_exact_symbol_data(company.nse_symbol)
-            bse_security_code = await fetch_bse_exact_symbol_data_from_json(company.nse_symbol)
-
-            nse_code = company.nse_code
-            bse_code = company.bse_code
-            if nse_company_list and bse_security_code:
-                platform = "NSE, BSE"
-                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-                bse_code =bse_security_code if bse_security_code else None
-            elif nse_company_list:
-                platform = "NSE"
-                nse_code = nse_company_list[0].get("nse_code") if nse_company_list else None
-            elif bse_security_code:
-                platform = "BSE"
-                bse_code = bse_security_code if bse_security_code else None
-
-            company.bse_code = bse_code
-            company.nse_code = nse_code
-
-            db.commit()
-            new_process_symbol.append(company.nse_symbol)
-
-        except Exception as e:
-            db.rollback()
-            print(f"\nFAILED company: {company.id} | {company.name}")
-            print("Error:", str(e))
-            continue
-    db.close()
-    await update_nse_bse_scrip_code_save_processed_symbol(new_process_symbol, "processed_symbols")
+            if current_run_symbols:
+                await update_nse_bse_scrip_code_save_processed_symbol(
+                    list(current_run_symbols), "remove_processing"
+                )
+        except Exception:
+            pass
+        raise main_err
+    finally:
+        db.close()
 
 
 async def update_nse_bse_stock_information_async():
@@ -4474,71 +4535,184 @@ async def hourly_fetch_current_day_gross_deliverables_nse_stock_information_asyn
         db.close()
 
 # fetch stock chart data
-CHART_GROUP_SIZE = 20
+CHART_GROUP_SIZE = 50
+
+def _fetch_yahoo_stock_sync(ticker: str) -> tuple[dict, list]:
+    """Fetch info and max 1d history for a ticker using yfinance synchronously."""
+    yf_ticker = yf.Ticker(ticker)
+
+    # 1. Fundamentals / info
+    stock_data = {}
+    try:
+        info = yf_ticker.info
+        if isinstance(info, dict):
+            stock_data = info
+    except Exception:
+        stock_data = {}
+
+    # Safeguard: retrieve last price from fast_info if missing in info
+    if "currentPrice" not in stock_data and "regularMarketPrice" not in stock_data:
+        try:
+            fast_info = getattr(yf_ticker, "fast_info", None)
+            if fast_info:
+                last_price = getattr(fast_info, "last_price", None)
+                if last_price:
+                    stock_data["currentPrice"] = last_price
+        except Exception:
+            pass
+
+    # 2. Historical chart data (max daily)
+    chart_data = []
+    try:
+        hist = yf_ticker.history(
+            period="max",
+            interval="1d",
+            auto_adjust=False
+        )
+        if hist is not None and not hist.empty:
+            timestamps = (hist.index.astype("int64") // 10**6).tolist()
+            closes = hist["Close"].tolist()
+            volumes = hist["Volume"].tolist()
+            for ts, c, v in zip(timestamps, closes, volumes):
+                if c is not None and c == c and float(c) > 0:
+                    chart_data.append([
+                        int(ts),
+                        round(float(c), 2),
+                        "",
+                        None,
+                        None,
+                        int(v) if v is not None and v == v else 0,
+                    ])
+    except Exception:
+        chart_data = []
+
+    return stock_data, chart_data
+
 
 @shared_task(bind=True)
-def process_chart_data_delivery_batch(self, chart_data_history, skip_symbols, file_name):
-
+def process_chart_data_delivery_batch(self, chart_data_history, skip_symbols, redis_target):
     db = SessionLocalSync()
 
     failed = []
     new_process_symbol = []
     try:
-        for item in chart_data_history:
-            try:
-                stmt = select(ChartDataset).where(
-                    ChartDataset.company_id == item.get("company_id"),
-                    ChartDataset.meta["days"].astext == "30Y"
+        if chart_data_history:
+            company_ids = [item["company_id"] for item in chart_data_history if item.get("company_id")]
+
+            # Bulk fetch existing ChartDataset
+            existing_charts = {
+                c.company_id: c
+                for c in db.scalars(
+                    select(ChartDataset).where(
+                        ChartDataset.company_id.in_(company_ids),
+                        ChartDataset.meta["days"].astext == "30Y"
+                    )
                 )
-                exists_30y = db.scalar(stmt)
-                if exists_30y:
-                    exists_30y.values = item.get("chart_data")
+            }
 
-                stmt = select(KeyDetailsForCS).where(
-                    KeyDetailsForCS.company_id == item.get("company_id")
+            # Bulk fetch existing KeyDetails
+            existing_details = {
+                kd.company_id: kd
+                for kd in db.scalars(
+                    select(KeyDetailsForCS).where(
+                        KeyDetailsForCS.company_id.in_(company_ids)
+                    )
                 )
+            }
 
-                key_details = db.scalar(stmt)
+            for item in chart_data_history:
+                try:
+                    cid = item.get("company_id")
+                    if not cid:
+                        continue
 
-                if key_details:
-                    key_details.current_price = item.get("current_price")
-                    key_details.pe_ratio = item.get("pe_ratio")
-                    key_details.book_value = item.get("book_value")
-                    key_details.dividend_yield = item.get("dividend_yield")
-                    key_details.roe = item.get("roe")
-                    key_details.about = item.get("about")
-                    key_details.current_price = item.get("current_price")
+                    exchange = item.get("exchange") or ("BSE" if item.get("suffix") == "BO" else "NSE")
+                    label = f"Price on {exchange}"
 
-                db.commit()
+                    # Update or insert ChartDataset
+                    chart = existing_charts.get(cid)
+                    if chart:
+                        if item.get("chart_data"):
+                            chart.values = item.get("chart_data")
+                    elif item.get("chart_data"):
+                        db.add(ChartDataset(
+                            company_id=cid,
+                            metric="Price",
+                            label=label,
+                            meta={"days": "30Y"},
+                            values=item.get("chart_data"),
+                        ))
 
-            except Exception as e:
-                db.rollback()
-                failed.append(item["symbol"])
-            finally:
-                new_process_symbol.append(item["symbol"])
+                    # Update or insert KeyDetailsForCS
+                    kd = existing_details.get(cid)
+                    if kd:
+                        kd.current_price = item.get("current_price")
+                        kd.pe_ratio = item.get("pe_ratio")
+                        kd.book_value = item.get("book_value")
+                        kd.dividend_yield = item.get("dividend_yield")
+                        kd.roe = item.get("roe")
+                        kd.about = item.get("about")
+                    else:
+                        db.add(KeyDetailsForCS(
+                            company_id=cid,
+                            current_price=item.get("current_price"),
+                            pe_ratio=item.get("pe_ratio"),
+                            book_value=item.get("book_value"),
+                            dividend_yield=item.get("dividend_yield"),
+                            roe=item.get("roe"),
+                            about=item.get("about"),
+                        ))
 
+                    new_process_symbol.append(item["symbol"])
+                except Exception as e:
+                    failed.append(item.get("symbol"))
+
+            db.commit()
+
+    except Exception as e:
+        db.rollback()
+        print(f"Error in process_chart_data_delivery_batch: {e}")
+        failed.extend(new_process_symbol)
+        new_process_symbol = []
     finally:
-        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", file_name)
+        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(new_process_symbol, "processed_symbols", redis_target)
         failed.extend(skip_symbols)
-        sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", file_name)
-        count_stmt = (
-            select(func.count(distinct(CompanyStock.id)))
-            .outerjoin(
-                KeyDetailsForCS,
-                CompanyStock.id == KeyDetailsForCS.company_id
-            )
-        )
+        if failed:
+            sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(failed, "error", redis_target)
 
-        total_count = db.execute(count_stmt).scalar_one()
-        total_count_from_file = update_nse_bse_gross_deliverable_count_load_processed_symbols(file_name)
-        if total_count == total_count_from_file:
-            update_nse_bse_gross_deliverable_list_load_processed_symbols(file_name)
         db.close()
 
 
-async def fetch_and_update_basic_and_30y_stock_chart_data_async():
+async def fetch_and_update_basic_and_30y_stock_chart_data_async(limit: int | None = None):
     db = SessionLocalSync()
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    date_str = now_ist.strftime("%Y%m%d")
+    redis_target = f"redis:daily_basic_and_30y_stock_chart_data:{date_str}"
+    redis_prefix = redis_target[6:] if redis_target.startswith("redis:") else redis_target
+    redis_suffix_key = "cache:stock_exchange_suffix"
+
+    current_run_symbols = set()
     try:
+        from app.db.redis.redis import redis_client_1
+
+        # Clear any stale current_processed_symbols left over from an interrupted or errored previous run
+        try:
+            redis_client_1.delete(f"{redis_prefix}:current_processed_symbols")
+        except Exception as e:
+            pass
+
+        try:
+            cached_suffix_map = redis_client_1.hgetall(redis_suffix_key) or {}
+            # Purge any previously cached "SKIP" entries so they get re-evaluated properly
+            bad_skips = [sym for sym, val in cached_suffix_map.items() if val == "SKIP"]
+            if bad_skips:
+                redis_client_1.hdel(redis_suffix_key, *bad_skips)
+                for sym in bad_skips:
+                    cached_suffix_map.pop(sym, None)
+        except Exception as e:
+            print(f"Error loading cached exchange suffix from Redis: {e}")
+            cached_suffix_map = {}
+
         stmt = (
             select(CompanyStock)
             .outerjoin(
@@ -4547,25 +4721,54 @@ async def fetch_and_update_basic_and_30y_stock_chart_data_async():
             )
             .options(selectinload(CompanyStock.details))
         )
-        file_name = "update_daily_basic_and_30y_stock_chart_data.json"
         result = db.execute(stmt)
-        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(file_name))
+        processed_symbols = set(await update_nse_bse_gross_deliverable_data_load_processed_symbols(redis_target))
+
         unprocessed_companies = []
-        payloads = []
-        skip_symbols = []
         for c in result.scalars():
-            if c.nse_symbol not in processed_symbols:
+            if c.nse_symbol and c.nse_symbol not in processed_symbols:
                 unprocessed_companies.append(c)
-                if len(unprocessed_companies) == 100:
+                if limit and len(unprocessed_companies) >= limit:
                     break
-        started_symbols = [c.nse_symbol for c in unprocessed_companies]
-        await update_nse_bse_gross_deliverable_data_save_processed_symbol(started_symbols, "current_processed_symbols",
-                                                                          file_name)
-        for company in unprocessed_companies:
+
+        if not unprocessed_companies:
+            print(f"All symbols have already been processed for {redis_target}.")
+            return
+
+        print(f"Total unprocessed companies to process: {len(unprocessed_companies)}")
+
+        async def resolve_company_suffix(company) -> str:
+            """Check Redis cache, DB yahoo_symbol, or NSE/BSE to get suffix."""
+            symbol = company.nse_symbol
+            if not symbol:
+                return "SKIP"
+
+            # 1. Check Redis cache
+            cached = cached_suffix_map.get(symbol)
+            if cached and cached in ("NS", "BO"):
+                return cached
+
+            # 2. Check CompanyStock yahoo_symbol from database
+            if company.yahoo_symbol:
+                ysym = company.yahoo_symbol.strip().upper()
+                if ysym.endswith(".NS"):
+                    suffix = "NS"
+                elif ysym.endswith(".BO"):
+                    suffix = "BO"
+                else:
+                    suffix = "NS"
+                try:
+                    redis_client_1.hset(redis_suffix_key, symbol, suffix)
+                except Exception:
+                    pass
+                cached_suffix_map[symbol] = suffix
+                return suffix
+
+            # 3. Query NSE/BSE exact symbol data
             try:
                 nse_company_list, bse_company_list = await asyncio.gather(
-                    fetch_nse_exact_symbol_data(company.nse_symbol),
-                    fetch_bse_exact_symbol_data(company.nse_symbol),
+                    fetch_nse_exact_symbol_data(symbol),
+                    fetch_bse_exact_symbol_data(symbol),
                 )
                 if nse_company_list and bse_company_list:
                     suffix = "NS"
@@ -4574,75 +4777,135 @@ async def fetch_and_update_basic_and_30y_stock_chart_data_async():
                 elif nse_company_list:
                     suffix = "NS"
                 else:
-                    skip_symbols.append(company.nse_symbol)
-                    continue
+                    suffix = "NS" if company.nse_symbol else ("BO" if company.bse_code else "SKIP")
+            except Exception as exc:
+                # If network error occurs during NSE/BSE lookup, fallback to exchange symbol rather than failing with SKIP
+                suffix = "NS" if company.nse_symbol else ("BO" if company.bse_code else "SKIP")
 
-                yf_ticker_data = yf.Ticker(f"{company.nse_symbol}.{suffix}")
+            if suffix != "SKIP":
+                try:
+                    redis_client_1.hset(redis_suffix_key, symbol, suffix)
+                except Exception as redis_exc:
+                    print(f"Error storing suffix in Redis for {symbol}: {redis_exc}")
+                cached_suffix_map[symbol] = suffix
 
-                stmt = select(ChartDataset).where(
-                            ChartDataset.company_id == company.id,
-                            ChartDataset.meta["days"].astext == "30Y"
-                        )
+            return suffix
 
-                exists_30y = db.scalar(stmt)
-                if not exists_30y:
-                    skip_symbols.append(company.nse_symbol)
+        # Concurrency limiter (safe rate limit for Yahoo Finance)
+        semaphore = asyncio.Semaphore(15)
 
-                if exists_30y:
-                    stock_data = yf_ticker_data.info
-                    chart_data_history = yf_ticker_data.history(
-                        period="max",
-                        interval="1d",
-                        auto_adjust=False
+        async def fetch_single_company(company):
+            symbol = company.nse_symbol
+            if not symbol:
+                return company, None
+
+            suffix = await resolve_company_suffix(company)
+            if suffix == "SKIP":
+                return company, None
+
+            ticker = f"{symbol}.{suffix}"
+
+            async with semaphore:
+                try:
+                    stock_data, chart_data = await asyncio.wait_for(
+                        asyncio.to_thread(_fetch_yahoo_stock_sync, ticker),
+                        timeout=15.0
                     )
-                    chart_data = []
+                    if not stock_data and not chart_data:
+                        return company, None
 
-                    for date, row in chart_data_history.iterrows():
-                        chart_data.append([
-                            int(date.timestamp() * 1000),
-                            round(float(row["Close"]), 2),
-                            "",
-                            None,
-                            None,
-                            int(row["Volume"])
-                        ])
-                    payloads.append({
+                    current_price = stock_data.get("currentPrice") or stock_data.get("regularMarketPrice")
+                    if (current_price is None or current_price == 0) and chart_data:
+                        current_price = chart_data[-1][1]
+
+                    payload = {
                         "company_id": company.id,
-                        "symbol": company.nse_symbol,
+                        "symbol": symbol,
+                        "exchange": "BSE" if suffix == "BO" else "NSE",
+                        "suffix": suffix,
                         "chart_data": chart_data,
                         "about": stock_data.get("longBusinessSummary"),
                         "book_value": round(stock_data.get("bookValue") or 0, 2),
                         "dividend_yield": round(stock_data.get("dividendYield") or 0, 2),
                         "pe_ratio": round(stock_data.get("trailingPE") or 0, 2),
                         "roe": round((stock_data.get("returnOnEquity") or 0) * 100, 2),
-                        "current_price": round(stock_data.get("currentPrice") or 0, 2),
-                    })
+                        "current_price": round(current_price or 0, 2),
+                    }
+                    return company, payload
+                except Exception as err:
+                    print(f"Error fetching Yahoo data for {symbol} ({ticker}): {err}")
+                    return company, None
 
+        # Process in streaming chunks of 100
+        STREAM_CHUNK = 100
+        payloads = []
+        skip_symbols = []
 
-                if len(payloads) == CHART_GROUP_SIZE:
-                    group(
-                        process_chart_data_delivery_batch.s(payloads.copy(), skip_symbols.copy(), file_name),
-                    ).apply_async()
-                    payloads.clear()
-                    skip_symbols.clear()
+        for i in range(0, len(unprocessed_companies), STREAM_CHUNK):
+            company_slice = unprocessed_companies[i : i + STREAM_CHUNK]
+            slice_symbols = [c.nse_symbol for c in company_slice]
+            current_run_symbols.update(slice_symbols)
+            await update_nse_bse_gross_deliverable_data_save_processed_symbol(
+                slice_symbols, "current_processed_symbols", redis_target
+            )
 
+            tasks = [
+                fetch_single_company(comp)
+                for comp in company_slice
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            except Exception as e:
-                db.rollback()
-                print(f"\nFAILED company: {company.id} | {company.name}")
-                print("Error:", str(e))
-                continue
+            chunk_failed = []
+            for comp, res in zip(company_slice, results):
+                if isinstance(res, Exception) or not res or res[1] is None:
+                    skip_symbols.append(comp.nse_symbol)
+                    chunk_failed.append(comp.nse_symbol)
+                else:
+                    _, payload = res
+                    payloads.append(payload)
 
-        if payloads:
+            # Immediately remove failed symbols from current_processed_symbols in Redis
+            # and record them into error set so they never remain stuck
+            if chunk_failed:
+                try:
+                    current_run_symbols.difference_update(chunk_failed)
+                    redis_client_1.srem(f"{redis_prefix}:current_processed_symbols", *chunk_failed)
+                    sync_update_nse_bse_gross_deliverable_data_save_processed_symbol(
+                        chunk_failed, "error", redis_target
+                    )
+                except Exception as redis_err:
+                    print(f"Error cleaning up failed symbols from Redis: {redis_err}")
+
+            if len(payloads) >= CHART_GROUP_SIZE:
+                group(
+                    process_chart_data_delivery_batch.s(payloads.copy(), skip_symbols.copy(), redis_target),
+                ).apply_async()
+                payloads.clear()
+                skip_symbols.clear()
+
+        # Flush any remaining payloads
+        if payloads or skip_symbols:
             group(
                 process_chart_data_delivery_batch.s(
-                    payloads.copy(),skip_symbols.copy(),
-                    file_name
+                    payloads.copy(), skip_symbols.copy(),
+                    redis_target
                 ),
             ).apply_async()
             payloads.clear()
             skip_symbols.clear()
 
+    except Exception as main_err:
+        print(f"Error in fetch_and_update_basic_and_30y_stock_chart_data_async: {main_err}")
+        # If an error occurs in main function, immediately remove all symbols added to current_processed_symbols during this run
+        try:
+            from app.db.redis.redis import redis_client_1
+            if current_run_symbols:
+                redis_client_1.srem(f"{redis_prefix}:current_processed_symbols", *current_run_symbols)
+            else:
+                redis_client_1.delete(f"{redis_prefix}:current_processed_symbols")
+        except Exception as redis_clean_err:
+            print(f"Error cleaning up current_processed_symbols on main error: {redis_clean_err}")
+        raise main_err
     finally:
         db.close()
 
