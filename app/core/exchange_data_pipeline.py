@@ -287,11 +287,20 @@ class _ExchangeHttpClient:
         self.timeout_seconds = max(1, timeout_seconds)
         self.retries = max(1, retries)
         self.rate_limiter = AsyncLimiter(max(1, requests_per_second), time_period=1)
-        self.proxy_pool: AsyncProxyPool = load_proxy_pool(
-            self.provider,
-            config_path=proxy_config_path,
-            default_concurrency=self.concurrency,
-            redis_url=get_settings().redis_url,
+        settings = get_settings()
+        self.use_proxy = (
+            (self.provider == "nse" and (getattr(settings, "use_nse_proxy", False) or os.environ.get("USE_NSE_PROXY", "false").lower() in ("true", "1", "yes")))
+            or (self.provider == "bse" and (getattr(settings, "use_bse_proxy", False) or os.environ.get("USE_BSE_PROXY", "false").lower() in ("true", "1", "yes")))
+        )
+        self.proxy_pool: AsyncProxyPool | None = (
+            load_proxy_pool(
+                self.provider,
+                config_path=proxy_config_path,
+                default_concurrency=self.concurrency,
+                redis_url=settings.redis_url,
+            )
+            if self.use_proxy
+            else None
         )
         self._company_semaphore = asyncio.Semaphore(self.concurrency)
         self._session: aiohttp.ClientSession | None = None
@@ -317,7 +326,8 @@ class _ExchangeHttpClient:
     async def __aexit__(self, *_: Any) -> None:
         if self._session:
             await self._session.close()
-        await self.proxy_pool.close()
+        if self.proxy_pool:
+            await self.proxy_pool.close()
 
     @property
     def headers(self) -> dict[str, str]:
@@ -338,48 +348,82 @@ class _ExchangeHttpClient:
             delay: float | None = None
             failure_recorded = False
             try:
-                async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
-                    started = time.monotonic()
-                    try:
-                        async with self._session.get(
-                            url,
-                            params=params,
-                            headers=extra_headers,
-                            proxy=endpoint.url,
-                        ) as response:
-                            if response.status in {401, 403, 408, 425, 429} or response.status >= 500:
-                                await self.proxy_pool.failure(endpoint, f"http_{response.status}")
-                                failure_recorded = True
-                                last_error = aiohttp.ClientResponseError(
-                                    response.request_info,
-                                    response.history,
-                                    status=response.status,
-                                    message=f"{self.provider.upper()} request blocked or unavailable",
-                                    headers=response.headers,
-                                )
-                                retry_after = response.headers.get("Retry-After", "")
-                                delay = float(retry_after) if retry_after.isdigit() else (0.35 * (2**attempt)) + random.random() * 0.25
-                            elif response.status == 404:
-                                raise PermanentExchangeError(
-                                    f"{self.provider.upper()} instrument was not found"
-                                )
-                            else:
-                                response.raise_for_status()
-                                payload = await response.json(content_type=None)
-                                if not isinstance(payload, dict):
-                                    raise ValueError(f"{self.provider.upper()} returned non-object JSON")
-                                await self.proxy_pool.success(
-                                    endpoint,
-                                    latency_ms=(time.monotonic() - started) * 1000,
-                                )
-                                return payload
-                    except PermanentExchangeError:
-                        raise
-                    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-                        last_error = exc
-                        if not failure_recorded:
-                            await self.proxy_pool.failure(endpoint, type(exc).__name__)
-                        delay = (0.35 * (2**attempt)) + random.random() * 0.25
+                if self.proxy_pool and self.use_proxy:
+                    async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
+                        started = time.monotonic()
+                        try:
+                            async with self._session.get(
+                                url,
+                                params=params,
+                                headers=extra_headers,
+                                proxy=endpoint.url,
+                            ) as response:
+                                if response.status in {401, 403, 408, 425, 429} or response.status >= 500:
+                                    await self.proxy_pool.failure(endpoint, f"http_{response.status}")
+                                    failure_recorded = True
+                                    last_error = aiohttp.ClientResponseError(
+                                        response.request_info,
+                                        response.history,
+                                        status=response.status,
+                                        message=f"{self.provider.upper()} request blocked or unavailable",
+                                        headers=response.headers,
+                                    )
+                                    retry_after = response.headers.get("Retry-After", "")
+                                    delay = float(retry_after) if retry_after.isdigit() else (0.35 * (2**attempt)) + random.random() * 0.25
+                                elif response.status == 404:
+                                    raise PermanentExchangeError(
+                                        f"{self.provider.upper()} instrument was not found"
+                                    )
+                                else:
+                                    response.raise_for_status()
+                                    payload = await response.json(content_type=None)
+                                    if not isinstance(payload, dict):
+                                        raise ValueError(f"{self.provider.upper()} returned non-object JSON")
+                                    await self.proxy_pool.success(
+                                        endpoint,
+                                        latency_ms=(time.monotonic() - started) * 1000,
+                                    )
+                                    return payload
+                        except PermanentExchangeError:
+                            raise
+                        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                            last_error = exc
+                            if not failure_recorded:
+                                await self.proxy_pool.failure(endpoint, type(exc).__name__)
+                            delay = (0.35 * (2**attempt)) + random.random() * 0.25
+                else:
+                    async with self.rate_limiter:
+                        try:
+                            async with self._session.get(
+                                url,
+                                params=params,
+                                headers=extra_headers,
+                            ) as response:
+                                if response.status in {401, 403, 408, 425, 429} or response.status >= 500:
+                                    last_error = aiohttp.ClientResponseError(
+                                        response.request_info,
+                                        response.history,
+                                        status=response.status,
+                                        message=f"{self.provider.upper()} request blocked or unavailable",
+                                        headers=response.headers,
+                                    )
+                                    retry_after = response.headers.get("Retry-After", "")
+                                    delay = float(retry_after) if retry_after.isdigit() else (0.35 * (2**attempt)) + random.random() * 0.25
+                                elif response.status == 404:
+                                    raise PermanentExchangeError(
+                                        f"{self.provider.upper()} instrument was not found"
+                                    )
+                                else:
+                                    response.raise_for_status()
+                                    payload = await response.json(content_type=None)
+                                    if not isinstance(payload, dict):
+                                        raise ValueError(f"{self.provider.upper()} returned non-object JSON")
+                                    return payload
+                        except PermanentExchangeError:
+                            raise
+                        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                            last_error = exc
+                            delay = (0.35 * (2**attempt)) + random.random() * 0.25
             except PermanentExchangeError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, ValueError) as exc:
@@ -470,10 +514,14 @@ class BSEQuoteClient(_ExchangeHttpClient):
             "Accept-Language": "en-US,en;q=0.9",
             "Origin": "https://www.bseindia.com",
             "Referer": "https://www.bseindia.com/",
+            "Priority": "u=1, i",
+            "Sec-CH-UA": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Linux"',
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-site",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
         }
 
     async def fetch(self, target: ExchangeTarget) -> ExchangeQuote:
@@ -594,7 +642,7 @@ async def refresh_exchange_targets_async(
         proxy_config_path=proxy_config_path,
     ) as client:
         completed, failed, permanent = await client.fetch_many(targets)
-        proxy_health = await client.proxy_pool.health_snapshot()
+        proxy_health = await client.proxy_pool.health_snapshot() if client.proxy_pool else []
 
     persisted = persist_exchange_quotes(completed)
     persisted.requested = len(targets)

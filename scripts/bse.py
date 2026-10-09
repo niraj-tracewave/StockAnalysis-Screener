@@ -8,13 +8,64 @@ from aiolimiter import AsyncLimiter
 
 from app.core.proxy_pool import load_proxy_pool
 
+USE_BSE_PROXY = os.environ.get("USE_BSE_PROXY", "false").lower() in ("true", "1", "yes")
+
+BROWSER_PROFILES = [
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "sec_ch_ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+        "sec_ch_ua_platform": '"Linux"',
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "sec_ch_ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+        "sec_ch_ua_platform": '"Windows"',
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "sec_ch_ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+        "sec_ch_ua_platform": '"macOS"',
+    },
+    {
+        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "sec_ch_ua": '"Chromium";v="139", "Not=A?Brand";v="24", "Google Chrome";v="139"',
+        "sec_ch_ua_platform": '"Linux"',
+    },
+    {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "sec_ch_ua": '"Chromium";v="139", "Not=A?Brand";v="24", "Google Chrome";v="139"',
+        "sec_ch_ua_platform": '"Windows"',
+    },
+]
+
+
+def get_dynamic_bse_headers(scripcode: str = "") -> dict[str, str]:
+    profile = random.choice(BROWSER_PROFILES)
+    referer = f"https://www.bseindia.com/stock-share-price/sp/{scripcode}/" if scripcode else "https://www.bseindia.com/"
+    return {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9",
+        "origin": "https://www.bseindia.com",
+        "referer": referer,
+        "priority": "u=1, i",
+        "sec-ch-ua": profile["sec_ch_ua"],
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": profile["sec_ch_ua_platform"],
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": profile["user_agent"],
+    }
+
+
 #bse new changes done
 class RawBSEClient:
     BASE = "https://api.bseindia.com/BseIndiaAPI/api"
 
     def __init__(self):
         self.session = None
-        self.proxy_pool = load_proxy_pool("bse", default_concurrency=4)
+        # Proxy code commented out as requested (uncomment or set USE_BSE_PROXY=true when proxies are ready)
+        # self.proxy_pool = load_proxy_pool("bse", default_concurrency=4) if USE_BSE_PROXY else None
         self.rate_limiter = AsyncLimiter(
             max(1, int(os.environ.get("BSE_REQUESTS_PER_SECOND", "4"))),
             time_period=1,
@@ -32,52 +83,37 @@ class RawBSEClient:
         self.session = aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=12, connect=3, sock_read=5),
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/141 Safari/537.36"
-                ),
-                "Accept": "application/json, text/plain, */*",
-                "Origin": "https://www.bseindia.com",
-                "Referer": "https://www.bseindia.com/",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site",
-            },
+            headers=get_dynamic_bse_headers(),
             json_serialize=ujson.dumps,
         )
 
     async def close(self):
         if self.session:
             await self.session.close()
-        await self.proxy_pool.close()
+        # if hasattr(self, "proxy_pool") and self.proxy_pool:
+        #     await self.proxy_pool.close()
 
     async def _get(self, endpoint, params=None):
         """Return raw JSON response for ANY endpoint."""
         if not self.session:
             raise RuntimeError("RawBSEClient.init() must be called first")
         retries = max(1, int(os.environ.get("EXCHANGE_RETRIES", "3")))
+        scripcode = str((params or {}).get("scripcode", "")).strip()
         for attempt in range(retries):
             try:
-                async with self.rate_limiter, self.proxy_pool.lease() as proxy_endpoint:
-                    started = time.monotonic()
-                    try:
-                        async with self.session.get(
-                            f"{self.BASE}/{endpoint}",
-                            params=params,
-                            proxy=proxy_endpoint.url,
-                        ) as response:
-                            response.raise_for_status()
-                            raw = await response.read()
-                            await self.proxy_pool.success(
-                                proxy_endpoint,
-                                latency_ms=(time.monotonic() - started) * 1000,
-                            )
-                            return ujson.loads(raw)
-                    except Exception as exc:
-                        await self.proxy_pool.failure(proxy_endpoint, type(exc).__name__)
-            except Exception:
+                # Proxy code commented out: executing direct request without proxy pool
+                headers = get_dynamic_bse_headers(scripcode)
+                async with self.rate_limiter:
+                    async with self.session.get(
+                        f"{self.BASE}/{endpoint}",
+                        params=params,
+                        headers=headers,
+                        # proxy=proxy_endpoint.url,
+                    ) as response:
+                        response.raise_for_status()
+                        raw = await response.read()
+                        return ujson.loads(raw)
+            except Exception as e:
                 pass
             if attempt + 1 < retries:
                 await asyncio.sleep((0.35 * (2**attempt)) + random.random() * 0.25)

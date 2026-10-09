@@ -9,12 +9,15 @@ from aiolimiter import AsyncLimiter
 from app.core.proxy_pool import load_proxy_pool
 
 
+USE_NSE_PROXY = os.environ.get("USE_NSE_PROXY", "false").lower() in ("true", "1", "yes")
+
+
 class FastNSEClient:
     BASE = "https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi"
 
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
-        self.proxy_pool = load_proxy_pool("nse", default_concurrency=4)
+        self.proxy_pool = load_proxy_pool("nse", default_concurrency=4) if USE_NSE_PROXY else None
         self.rate_limiter = AsyncLimiter(
             max(1, int(os.environ.get("NSE_REQUESTS_PER_SECOND", "4"))),
             time_period=1,
@@ -55,7 +58,8 @@ class FastNSEClient:
     async def close(self):
         if self.session:
             await self.session.close()
-        await self.proxy_pool.close()
+        if self.proxy_pool:
+            await self.proxy_pool.close()
 
     async def _call(self, params: dict, safe=False):
         if not self.session:
@@ -64,24 +68,33 @@ class FastNSEClient:
         last_error = None
         for attempt in range(retries):
             try:
-                async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
-                    started = time.monotonic()
-                    try:
+                if self.proxy_pool and USE_NSE_PROXY:
+                    async with self.rate_limiter, self.proxy_pool.lease() as endpoint:
+                        started = time.monotonic()
+                        try:
+                            async with self.session.get(
+                                self.BASE,
+                                params=params,
+                                proxy=endpoint.url,
+                            ) as response:
+                                response.raise_for_status()
+                                result = await response.json(loads=ujson.loads, content_type=None)
+                                await self.proxy_pool.success(
+                                    endpoint,
+                                    latency_ms=(time.monotonic() - started) * 1000,
+                                )
+                                return result
+                        except Exception as exc:
+                            last_error = exc
+                            await self.proxy_pool.failure(endpoint, type(exc).__name__)
+                else:
+                    async with self.rate_limiter:
                         async with self.session.get(
                             self.BASE,
                             params=params,
-                            proxy=endpoint.url,
                         ) as response:
                             response.raise_for_status()
-                            result = await response.json(loads=ujson.loads, content_type=None)
-                            await self.proxy_pool.success(
-                                endpoint,
-                                latency_ms=(time.monotonic() - started) * 1000,
-                            )
-                            return result
-                    except Exception as exc:
-                        last_error = exc
-                        await self.proxy_pool.failure(endpoint, type(exc).__name__)
+                            return await response.json(loads=ujson.loads, content_type=None)
             except Exception as exc:
                 last_error = exc
             if attempt + 1 < retries:

@@ -2931,64 +2931,48 @@ async def update_nse_bse_price_data_save_processed_symbol(symbols, key, file_nam
         json.dump(data, f, indent=4)
 
 async def update_nse_bse_newly_listed_stock_save_processed_symbol(symbols, key, file_name):
-    file = get_custom_today_file(file_name)
+    if not symbols:
+        return
 
-    data = {
-        "processed_symbols": [],
-        "current_processed_symbols": [],
-        "error": []
-    }
+    try:
+        from app.db.redis.redis import redis_client_1
+        proc_key = f"{file_name}:processed_symbols"
+        curr_key = f"{file_name}:current_processed_symbols"
+        err_key = f"{file_name}:error"
 
-    if os.path.exists(file):
-        try:
-            with open(file, "r") as f:
-                content = f.read().strip()
-                if content:
-                    data = json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-    if key == "current_processed_symbols":
-        data["current_processed_symbols"].extend(symbols)
-        data["current_processed_symbols"] = list(set(data["current_processed_symbols"]))
-
-    elif key == "processed_symbols":
-        data["processed_symbols"].extend(symbols)
-        data["processed_symbols"] = list(set(data["processed_symbols"]))
-
-        current_set = set(data.get("current_processed_symbols", []))
-        current_set -= set(symbols)
-        data["current_processed_symbols"] = list(current_set)
-
-    elif key == "error":
-        data["error"].extend(symbols)
-        data["error"] = list(set(data["error"]))
-
-        current_set = set(data.get("current_processed_symbols", []))
-        current_set -= set(symbols)
-        data["current_processed_symbols"] = list(current_set)
-
-    with open(file, "w") as f:
-        json.dump(data, f, indent=4)
+        if key == "current_processed_symbols":
+            for i in range(0, len(symbols), 1000):
+                redis_client_1.sadd(curr_key, *symbols[i:i + 1000])
+        elif key == "processed_symbols":
+            for i in range(0, len(symbols), 1000):
+                chunk = symbols[i:i + 1000]
+                redis_client_1.sadd(proc_key, *chunk)
+                redis_client_1.srem(curr_key, *chunk)
+        elif key == "error":
+            for i in range(0, len(symbols), 1000):
+                chunk = symbols[i:i + 1000]
+                redis_client_1.sadd(err_key, *chunk)
+                redis_client_1.srem(curr_key, *chunk)
+        elif key == "remove_processing":
+            for i in range(0, len(symbols), 1000):
+                redis_client_1.srem(curr_key, *symbols[i:i + 1000])
+    except Exception as redis_err:
+        print(f"Error saving newly listed stock symbols to Redis: {redis_err}")
 
 
 async def fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name):
-    file_path = get_custom_today_file(file_name)
-    skipped_symbols = {}
+    processed = set()
+    try:
+        from app.db.redis.redis import redis_client_1
+        proc_key = f"{file_name}:processed_symbols"
+        redis_proc = redis_client_1.smembers(proc_key) or set()
+        for s in redis_proc:
+            sym = s.decode("utf-8") if isinstance(s, bytes) else str(s)
+            processed.add(sym)
+    except Exception as redis_err:
+        print(f"Error loading newly listed symbols from Redis: {redis_err}")
 
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-
-            processed_symbols = set(data.get("processed_symbols", []))
-
-            print(f"{len(skipped_symbols)} skipped from json")
-            return processed_symbols
-
-        except Exception as e:
-            return {}
-    return {}
+    return processed
 
 async def fetch_symbols_from_covered_symbol_json_for_shareholder_result(file_name):
     file_path  = file_name

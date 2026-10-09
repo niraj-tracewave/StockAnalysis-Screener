@@ -1191,272 +1191,440 @@ async def update_nse_bse_stock_information_async():
 
 async def fetch_and_store_newly_listed_company_data_from_nse_bse_async():
     """
-    Background task to store NSE company data
+    Background task to store NSE/BSE newly listed company data (optimized for high speed).
     """
     db = SessionLocalSync()
     error_symbols = []
     processed_symbols = []
     file_name = "nse_bse_newly_listed_stocks"
+
+    def safe_float(val):
+        if val is None or val == "" or val == "-":
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
     try:
-        nse_newly_listed_stocks = await main_nse_newly_listed_stocks()
-        nse_newly_listed_stocks_symbol = [item.get('symbol') for item in nse_newly_listed_stocks.get('data', [])]
+        # Fetch NSE and BSE newly listed lists concurrently
+        nse_task = main_nse_newly_listed_stocks()
+        bse_task = main_newly_listed_stocks()
+        nse_res, bse_res = await asyncio.gather(nse_task, bse_task, return_exceptions=True)
+        nse_newly_listed_stocks = nse_res if not isinstance(nse_res, Exception) and nse_res else {}
+        newly_listed_stocks = bse_res if not isinstance(bse_res, Exception) and bse_res else {}
 
-        newly_listed_stocks = await main_newly_listed_stocks()
-        newly_listed_stocks_symbol = [item.get('symbol') for item in newly_listed_stocks.get('data', {}).get("results", [])]
+        nse_newly_listed_stocks_symbol = [
+            item.get('symbol')
+            for item in nse_newly_listed_stocks.get('data', [])
+            if item.get('symbol')
+        ]
+        newly_listed_stocks_symbol = [
+            item.get('symbol')
+            for item in newly_listed_stocks.get('data', {}).get("results", [])
+            if item.get('symbol')
+        ]
 
-        missing_symbols  = list(set(nse_newly_listed_stocks_symbol + newly_listed_stocks_symbol))
+        missing_symbols = list(set(nse_newly_listed_stocks_symbol + newly_listed_stocks_symbol))
 
         existing_symbols = await fetch_newly_listed_stock_symbols_from_covered_symbol_json(file_name)
-        current_processed_symbols = [s for s in missing_symbols if s not in existing_symbols]
-        await update_nse_bse_newly_listed_stock_save_processed_symbol(current_processed_symbols, "current_processed_symbols", file_name)
+        current_processed_symbols = [s for s in missing_symbols if s and s not in existing_symbols]
+        await update_nse_bse_newly_listed_stock_save_processed_symbol(
+            current_processed_symbols, "current_processed_symbols", file_name
+        )
+        if not current_processed_symbols:
+            return
 
+        # Bulk check existing symbols in DB upfront to skip already inserted ones instantly
+        candidates = current_processed_symbols[:100]
+        existing_in_db_records = db.execute(
+            select(CompanyStock.nse_symbol, CompanyStock.bse_code).where(
+                or_(
+                    CompanyStock.nse_symbol.in_(candidates),
+                    CompanyStock.bse_code.in_(candidates),
+                )
+            )
+        ).all()
+
+        db_existing_set = set()
+        for nse_sym, bse_c in existing_in_db_records:
+            if nse_sym:
+                db_existing_set.add(nse_sym.strip().upper())
+            if bse_c:
+                db_existing_set.add(str(bse_c).strip().upper())
+
+        symbols_to_fetch = []
+        already_in_db = []
+        for s in candidates:
+            if s.strip().upper() in db_existing_set:
+                already_in_db.append(s)
+                processed_symbols.append(s)
+            else:
+                symbols_to_fetch.append(s)
+
+        if already_in_db:
+            await update_nse_bse_newly_listed_stock_save_processed_symbol(
+                already_in_db, "processed_symbols", file_name
+            )
+
+        # Concurrency limiter to fetch multiple symbols fast without hitting rate limits
+        semaphore = asyncio.Semaphore(10)
+
+        async def fetch_single_newly_listed_symbol(symbol):
+            async with semaphore:
+                try:
+                    # Search NSE and BSE exact symbol data in parallel
+                    nse_list_task = fetch_nse_exact_symbol_data(symbol)
+                    bse_list_task = fetch_bse_exact_symbol_data(symbol)
+                    nse_company_list, bse_company_list = await asyncio.gather(
+                        nse_list_task, bse_list_task, return_exceptions=True
+                    )
+                    if isinstance(nse_company_list, Exception):
+                        nse_company_list = None
+                    if isinstance(bse_company_list, Exception):
+                        bse_company_list = None
+
+                    if nse_company_list and bse_company_list:
+                        security_code = bse_company_list[0].get("bse_code")
+                        nse_data, bse_data = await asyncio.gather(
+                            main(symbol),
+                            main_bse(security_code),
+                            return_exceptions=True
+                        )
+                        if isinstance(nse_data, Exception) or not nse_data:
+                            return symbol, None, "NSE data fetch failed"
+                        if isinstance(bse_data, Exception) or not bse_data:
+                            bse_data = {}
+
+                        nse_symbol = nse_data.get('symbol') or symbol
+                        company_name = nse_data.get('companyName')
+                        header_data = bse_data.get('header') or {}
+                        symbol_data = nse_data.get('symbolData') or {}
+                        eq_resp = symbol_data.get('equityResponse') or [{}]
+                        equity_response = eq_resp[0] if eq_resp else {}
+                        nse_metadata = equity_response.get('metaData') or {}
+                        trade_info = equity_response.get('tradeInfo') or {}
+                        sec_info = equity_response.get('secInfo') or {}
+                        total_market_cap = trade_info.get('totalMarketCap')
+                        market_cap_cr = round(total_market_cap / 1e7, 2) if total_market_cap else None
+                        current_price = trade_info.get('lastPrice')
+                        face_value = trade_info.get('faceValue')
+                        high_price = nse_metadata.get('dayHigh')
+                        low_price = nse_metadata.get('dayLow')
+                        pe_ratio = sec_info.get('pdSymbolPe')
+                        roe = header_data.get('ROE')
+                        macro = sec_info.get("macro")
+                        sector = sec_info.get("sector")
+                        industry_info = sec_info.get("industryInfo")
+                        basic_industry = sec_info.get("basicIndustry")
+                        bse_code = security_code
+                        nse_code = nse_company_list[0].get("nse_code")
+                        series = nse_metadata.get("series")
+                        symbol_type = sec_info.get("classShare")
+                        identifier = nse_metadata.get("identifier")
+
+                        # Fetch volume & 30Y graph commented out
+                        # days = "30Y"
+                        # company_name_with_dash = (company_name or symbol).replace(" ", "-")
+                        # vol_task = main_fetch_volume_from_nse(
+                        #     nse_code, f"{symbol}-{series}", symbol_type
+                        # )
+                        # graph_task = new_main_fetch_stock_price_for_graph(
+                        #     days, identifier, symbol, company_name_with_dash
+                        # )
+                        # vol_res, graph_res = await asyncio.gather(
+                        #     vol_task, graph_task, return_exceptions=True
+                        # )
+
+                        # chart_values = []
+                        # if not isinstance(graph_res, Exception) and graph_res:
+                        #     chart = graph_res.get('grapthData') or []
+                        #     vol_data = vol_res.get("data") if (not isinstance(vol_res, Exception) and vol_res) else []
+                        #     volume_map = {
+                        #         item["time"]: item["volume"]
+                        #         for item in vol_data
+                        #         if "time" in item and "volume" in item
+                        #     } if vol_data else {}
+                        #     for row in chart:
+                        #         time_val = row[0]
+                        #         volume_val = volume_map.get(time_val, None)
+                        #         chart_values.append(row + [volume_val])
+
+                        payload = {
+                            "exchange": "BOTH",
+                            "symbol": symbol,
+                            "company_name": company_name,
+                            "nse_code": nse_code,
+                            "bse_code": bse_code,
+                            "macro": macro,
+                            "sector": sector,
+                            "industry_info": industry_info,
+                            "basic_industry": basic_industry,
+                            "market_cap_cr": market_cap_cr,
+                            "current_price": safe_float(current_price),
+                            "pe_ratio": safe_float(pe_ratio),
+                            "face_value": safe_float(face_value),
+                            "high_price": safe_float(high_price),
+                            "low_price": safe_float(low_price),
+                            "roe": safe_float(roe),
+                            "chart_values": [],
+                            "chart_label": "Price on NSE",
+                        }
+                        return symbol, payload, None
+
+                    elif nse_company_list:
+                        nse_data = await main(symbol)
+                        if not nse_data:
+                            return symbol, None, "NSE data empty"
+
+                        nse_symbol = nse_data.get('symbol') or symbol
+                        company_name = nse_data.get('companyName')
+                        symbol_data = nse_data.get('symbolData') or {}
+                        eq_resp = symbol_data.get('equityResponse') or [{}]
+                        equity_response = eq_resp[0] if eq_resp else {}
+                        nse_metadata = equity_response.get('metaData') or {}
+                        trade_info = equity_response.get('tradeInfo') or {}
+                        sec_info = equity_response.get('secInfo') or {}
+                        total_market_cap = trade_info.get('totalMarketCap')
+                        market_cap_cr = round(total_market_cap / 1e7, 2) if total_market_cap else None
+                        current_price = trade_info.get('lastPrice')
+                        face_value = trade_info.get('faceValue')
+                        high_price = nse_metadata.get('dayHigh')
+                        low_price = nse_metadata.get('dayLow')
+                        pe_ratio = sec_info.get('pdSymbolPe')
+                        roe = None
+                        bse_code = None
+                        macro = sec_info.get("macro")
+                        sector = sec_info.get("sector")
+                        industry_info = sec_info.get("industryInfo")
+                        basic_industry = sec_info.get("basicIndustry")
+                        nse_code = nse_company_list[0].get("nse_code")
+                        series = nse_metadata.get("series")
+                        symbol_type = sec_info.get("classShare")
+                        identifier = nse_metadata.get("identifier")
+
+                        # days = "30Y"
+                        # company_name_with_dash = (company_name or symbol).replace(" ", "-")
+                        # vol_task = main_fetch_volume_from_nse(
+                        #     nse_code, f"{symbol}-{series}", symbol_type
+                        # )
+                        # graph_task = new_main_fetch_stock_price_for_graph(
+                        #     days, identifier, symbol, company_name_with_dash
+                        # )
+                        # vol_res, graph_res = await asyncio.gather(
+                        #     vol_task, graph_task, return_exceptions=True
+                        # )
+
+                        # chart_values = []
+                        # if not isinstance(graph_res, Exception) and graph_res:
+                        #     chart = graph_res.get('grapthData') or []
+                        #     vol_data = vol_res.get("data") if (not isinstance(vol_res, Exception) and vol_res) else []
+                        #     volume_map = {
+                        #         item["time"]: item["volume"]
+                        #         for item in vol_data
+                        #         if "time" in item and "volume" in item
+                        #     } if vol_data else {}
+                        #     for row in chart:
+                        #         time_val = row[0]
+                        #         volume_val = volume_map.get(time_val, None)
+                        #         chart_values.append(row + [volume_val])
+
+                        payload = {
+                            "exchange": "NSE",
+                            "symbol": symbol,
+                            "company_name": company_name,
+                            "nse_code": nse_code,
+                            "bse_code": bse_code,
+                            "macro": macro,
+                            "sector": sector,
+                            "industry_info": industry_info,
+                            "basic_industry": basic_industry,
+                            "market_cap_cr": market_cap_cr,
+                            "current_price": safe_float(current_price),
+                            "pe_ratio": safe_float(pe_ratio),
+                            "face_value": safe_float(face_value),
+                            "high_price": safe_float(high_price),
+                            "low_price": safe_float(low_price),
+                            "roe": None,
+                            "chart_values": [],
+                            "chart_label": "Price on NSE",
+                        }
+                        return symbol, payload, None
+
+                    elif bse_company_list:
+                        security_code = bse_company_list[0].get("bse_code")
+                        bse_data = await main_bse(security_code)
+                        # graph_task = new_main_fetch_stock_price_for_bse_graph(security_code)
+                        # bse_data, bse_graph = await asyncio.gather(
+                        #     bse_task, graph_task, return_exceptions=True
+                        # )
+                        if isinstance(bse_data, Exception) or not bse_data:
+                            return symbol, None, "BSE data empty"
+
+                        header_data = bse_data.get('header') or {}
+                        script_header = bse_data.get('scriptHeader') or {}
+                        company_detail = script_header.get('Cmpname') or {}
+                        header = script_header.get('Header') or {}
+                        price_graph = bse_data.get('priceGraph') or {}
+                        stock_trading = bse_data.get('stockTrading') or {}
+                        company_name = company_detail.get('FullN')
+                        total_market_cap = stock_trading.get('MktCapFull', None)
+                        market_cap_cr = float(total_market_cap) if total_market_cap else None
+                        current_price = price_graph.get('CurrVal')
+                        current_price = float(current_price) if current_price else None
+                        face_value = header_data.get('FaceVal')
+                        face_value = float(face_value) if face_value else None
+                        high_price = header.get('High')
+                        low_price = header.get('Low')
+                        pe_ratio = header_data.get('PE')
+                        roe = header_data.get('ROE')
+                        bse_code = security_code
+                        macro = header_data.get("Sector")
+                        sector = header_data.get("IndustryNew")
+                        industry_info = header_data.get("IGroup")
+                        basic_industry = header_data.get("Industry")
+                        nse_code = None
+
+                        # chart_values = []
+                        # if not isinstance(bse_graph, Exception) and bse_graph:
+                        #     script_hdr = bse_graph.get('Data')
+                        #     if script_hdr:
+                        #         data_list = json.loads(script_hdr)
+                        #         for item in data_list:
+                        #             ts_ms = int(
+                        #                 datetime.strptime(
+                        #                     item["dttm"], "%a %b %d %Y %H:%M:%S"
+                        #                 ).timestamp() * 1000
+                        #             )
+                        #             price = float(item["vale1"])
+                        #             volume = int(item["vole"])
+                        #             chart_values.append([ts_ms, price, "", None, None, volume])
+
+                        payload = {
+                            "exchange": "BSE",
+                            "symbol": symbol,
+                            "company_name": company_name,
+                            "nse_code": nse_code,
+                            "bse_code": bse_code,
+                            "macro": macro,
+                            "sector": sector,
+                            "industry_info": industry_info,
+                            "basic_industry": basic_industry,
+                            "market_cap_cr": market_cap_cr,
+                            "current_price": safe_float(current_price),
+                            "pe_ratio": safe_float(pe_ratio),
+                            "face_value": safe_float(face_value),
+                            "high_price": safe_float(high_price),
+                            "low_price": safe_float(low_price),
+                            "roe": safe_float(roe),
+                            "chart_values": [],
+                            "chart_label": "Price on BSE",
+                        }
+                        return symbol, payload, None
+                    else:
+                        return symbol, None, "Symbol not found on NSE or BSE"
+                except Exception as ex:
+                    return symbol, None, str(ex)
+
+        # Process in chunks of 50
         def chunk_list(data, size):
             for i in range(0, len(data), size):
                 yield data[i:i + size]
 
-        for chunk in chunk_list(current_processed_symbols[:100], 50):
+        for chunk in chunk_list(symbols_to_fetch, 50):
+            tasks = [fetch_single_newly_listed_symbol(symbol) for symbol in chunk]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for symbol in chunk:
-                try:
-                    with db.begin_nested():
-                        stmt = (
-                            select(CompanyStock)
-                            .where(
-                                or_(
-                                    CompanyStock.nse_symbol == symbol,
-                                    CompanyStock.bse_code == symbol
-                                )
-                            )
-                        )
+            chunk_processed = []
+            chunk_errors = []
 
-                        result = db.execute(stmt)
-                        company = result.scalars().first()
-                        await asyncio.sleep(2)
-                        if not company:
-                            roe = current_price = high_price = isSuspended = low_price = pe_ratio = bse_code = nse_symbol = company_name = market_cap_cr = face_value = macro = sector = industry_info = basic_industry = None
-                            nse_company_list = await fetch_nse_exact_symbol_data(symbol)
-                            bse_company_list = await fetch_bse_exact_symbol_data(symbol)
-                            if nse_company_list and bse_company_list:
-                                security_code = bse_company_list[0].get("bse_code")
-                                nse_data = await main(symbol)
-                                bse_data = await main_bse(security_code)
-                                nse_symbol = nse_data.get('symbol')
-                                company_name = nse_data.get('companyName')
-                                header_data = bse_data.get('header')
-                                symbol_data = nse_data.get('symbolData')
-                                equity_response = symbol_data.get('equityResponse')[0]
-                                nse_metadata = equity_response.get('metaData')
-                                trade_info = equity_response.get('tradeInfo')
-                                sec_info = equity_response.get('secInfo')
-                                total_market_cap = trade_info.get('totalMarketCap')
-                                if total_market_cap:
-                                    market_cap_cr = round(total_market_cap / 1e7, 2)
-                                else:
-                                    market_cap_cr = None
-                                current_price = trade_info.get('lastPrice')
-                                face_value = trade_info.get('faceValue')
-                                high_price = nse_metadata.get('dayHigh')
-                                low_price = nse_metadata.get('dayLow')
-                                pe_ratio = sec_info.get('pdSymbolPe')
-                                roe = header_data.get('ROE')
-                                macro = sec_info.get("macro")
-                                sector = sec_info.get("sector")
-                                industry_info = sec_info.get("industryInfo")
-                                basic_industry = sec_info.get("basicIndustry")
-                                bse_code = security_code
-                                nse_code = nse_company_list[0].get("nse_code")
-                                series = nse_metadata.get("series")
-                                symbol_type = sec_info.get("classShare")
-                                identifier = nse_metadata.get("identifier")
-                            elif nse_company_list:
-                                nse_data = await main(symbol)
-                                nse_symbol = nse_data.get('symbol')
-                                company_name = nse_data.get('companyName')
-                                symbol_data = nse_data.get('symbolData')
-                                equity_response = symbol_data.get('equityResponse')[0]
-                                nse_metadata = equity_response.get('metaData')
-                                trade_info = equity_response.get('tradeInfo')
-                                sec_info = equity_response.get('secInfo')
-                                total_market_cap = trade_info.get('totalMarketCap')
-                                if total_market_cap:
-                                    market_cap_cr = round(total_market_cap / 1e7, 2)
-                                else:
-                                    market_cap_cr = None
-                                current_price = trade_info.get('lastPrice')
-                                face_value = trade_info.get('faceValue')
-                                high_price = nse_metadata.get('dayHigh')
-                                low_price = nse_metadata.get('dayLow')
-                                pe_ratio = sec_info.get('pdSymbolPe')
-                                roe = None
-                                bse_code = None
-                                macro = sec_info.get("macro")
-                                sector = sec_info.get("sector")
-                                industry_info = sec_info.get("industryInfo")
-                                basic_industry = sec_info.get("basicIndustry")
-                                nse_code = nse_company_list[0].get("nse_code")
-                                series = nse_metadata.get("series")
-                                symbol_type = sec_info.get("classShare")
-                                identifier = nse_metadata.get("identifier")
-                            elif bse_company_list:
-                                security_code = bse_company_list[0].get("bse_code")
-                                bse_data = await main_bse(security_code)
-                                header_data = bse_data.get('header')
-                                script_header = bse_data.get('scriptHeader')
-                                company_detail = script_header.get('Cmpname')
-                                header = script_header.get('Header')
-                                price_graph = bse_data.get('priceGraph')
-                                stock_trading = bse_data.get('stockTrading')
-                                company_name = company_detail.get('FullN')
-                                total_market_cap = stock_trading.get('MktCapFull', None)
-                                if total_market_cap:
-                                    market_cap_cr = float(total_market_cap)
-                                current_price = price_graph.get('CurrVal')
-                                if current_price:
-                                    current_price = float(current_price)
-                                face_value = header_data.get('FaceVal')
-                                if face_value:
-                                    face_value = float(face_value)
-                                high_price = header.get('High')
-                                low_price = header.get('Low')
-                                pe_ratio = header_data.get('PE')
-                                roe = header_data.get('ROE')
-                                bse_code = security_code
-                                macro = header_data.get("Sector")
-                                sector = header_data.get("IndustryNew")
-                                industry_info = header_data.get("IGroup")
-                                basic_industry = header_data.get("Industry")
-                                nse_code = None
-                            else:
-                                error_symbols.append(symbol)
-                                continue
-                            company_stock = CompanyStock(
-                                nse_symbol=symbol,
-                                name=company_name,
-                                nse_code=nse_code,
-                                bse_code=bse_code,
-                                macro_economic_sector=macro,
-                                sector=sector,
-                                industry=industry_info,
-                                basic_industry=basic_industry
-                            )
-                            db.add(company_stock)
-                            db.flush()
-
-                            key_details = KeyDetailsForCS(
-                                market_cap=market_cap_cr,
-                                current_price=current_price,
-                                pe_ratio=float(pe_ratio) if pe_ratio and pe_ratio != '-' else None,
-                                face_value=face_value,
-                                high_price=float(high_price),
-                                low_price=float(low_price),
-                                book_value=None,
-                                dividend_yield=None,
-                                roce=None,
-                                roe=float(roe) if roe and roe != '-' else None,
-                                company_id=company_stock.id
-                            )
-                            db.add(key_details)
-                            db.flush()
-
-                            days_list = ["30Y"]
-                            if nse_company_list and bse_company_list:
-                                volume_data = await main_fetch_volume_from_nse(nse_code,
-                                                                               f"{symbol}-{series}", symbol_type)
-                                for days in days_list:
-                                    company_name_with_dash = company_name.replace(" ", "-")
-                                    nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
-                                    chart = nse_data.get('grapthData')
-                                    if chart:
-                                        volume_map = {item["time"]: item["volume"] for item in
-                                                      volume_data.get("data", None)}
-                                        updated_data = []
-                                        for row in chart:
-                                            time = row[0]
-                                            volume = volume_map.get(time, None)
-                                            updated_row = row + [volume]
-                                            updated_data.append(updated_row)
-                                        company_stock_chart_dataset_ops = ChartDataset(
-                                                    metric="Price",
-                                                    label="Price on NSE",
-                                                    meta={"days": days},
-                                                    company_id=company_stock.id,
-                                                    values=updated_data,
-                                                )
-                                        db.add(company_stock_chart_dataset_ops)
-                                        db.flush()
-                            elif nse_company_list:
-                                volume_data = await main_fetch_volume_from_nse(nse_code,
-                                                                               f"{symbol}-{series}",
-                                                                               symbol_type)
-                                for days in days_list:
-                                    company_name_with_dash = company_name.replace(" ", "-")
-                                    nse_data = await new_main_fetch_stock_price_for_graph(days, identifier, symbol, company_name_with_dash)
-                                    chart = nse_data.get('grapthData')
-                                    if chart:
-                                        volume_map = {item["time"]: item["volume"] for item in
-                                                      volume_data.get("data", None)}
-                                        updated_data = []
-                                        for row in chart:
-                                            time = row[0]
-                                            volume = volume_map.get(time, None)
-                                            updated_row = row + [volume]
-                                            updated_data.append(updated_row)
-                                        company_stock_chart_dataset_ops = ChartDataset(
-                                            metric="Price",
-                                            label="Price on NSE",
-                                            meta={"days": days},
-                                            company_id=company_stock.id,
-                                            values=updated_data,
-                                        )
-                                        db.add(company_stock_chart_dataset_ops)
-                                        db.flush()
-                            elif bse_company_list:
-                                security_code = bse_company_list[0].get("bse_code")
-                                days_list = ["30Y"]
-                                for days in days_list:
-                                    bse_data = await new_main_fetch_stock_price_for_bse_graph(security_code)
-                                    script_header = bse_data.get('Data')
-                                    if script_header:
-                                        data_list = json.loads(script_header)
-                                        result = []
-
-                                        for item in data_list:
-                                            ts_ms = int(
-                                                datetime.strptime(item["dttm"],
-                                                                  "%a %b %d %Y %H:%M:%S").timestamp() * 1000
-                                            )
-                                            price = float(item["vale1"])
-                                            volume = int(item["vole"])
-                                            result.append([ts_ms, price, "", None, None, volume])
-
-                                        company_stock_chart_dataset_ops = ChartDataset(
-                                            metric="Price",
-                                            label="Price on BSE",
-                                            meta={"days": days},
-                                            company_id=company_stock.id,
-                                            values=result,
-                                        )
-                                        db.add(company_stock_chart_dataset_ops)
-                                        db.flush()
-
-                            processed_symbols.append(symbol)
-
-                except Exception as symbol_error:
+            for item in results:
+                if isinstance(item, Exception) or not item:
+                    continue
+                symbol, payload, err = item
+                if not payload:
+                    chunk_errors.append(symbol)
                     error_symbols.append(symbol)
-                    print(f"Error for symbol {symbol}: {symbol_error}")
+                    print(f"Error for symbol {symbol}: {err}")
                     continue
 
+                try:
+                    with db.begin_nested():
+                        company_stock = CompanyStock(
+                            nse_symbol=symbol,
+                            name=payload["company_name"],
+                            nse_code=payload["nse_code"],
+                            bse_code=payload["bse_code"],
+                            macro_economic_sector=payload["macro"],
+                            sector=payload["sector"],
+                            industry=payload["industry_info"],
+                            basic_industry=payload["basic_industry"]
+                        )
+                        db.add(company_stock)
+                        db.flush()
+
+                        key_details = KeyDetailsForCS(
+                            market_cap=payload["market_cap_cr"],
+                            current_price=payload["current_price"],
+                            pe_ratio=payload["pe_ratio"],
+                            face_value=payload["face_value"],
+                            high_price=payload["high_price"],
+                            low_price=payload["low_price"],
+                            book_value=None,
+                            dividend_yield=None,
+                            roce=None,
+                            roe=payload["roe"],
+                            company_id=company_stock.id
+                        )
+                        db.add(key_details)
+                        db.flush()
+
+                        # if payload.get("chart_values"):
+                        #     company_stock_chart_dataset_ops = ChartDataset(
+                        #         metric="Price",
+                        #         label=payload["chart_label"],
+                        #         meta={"days": "30Y"},
+                        #         company_id=company_stock.id,
+                        #         values=payload["chart_values"],
+                        #     )
+                        #     db.add(company_stock_chart_dataset_ops)
+                        #     db.flush()
+
+                        chunk_processed.append(symbol)
+                        processed_symbols.append(symbol)
+                except Exception as symbol_db_error:
+                    chunk_errors.append(symbol)
+                    error_symbols.append(symbol)
+                    print(f"DB Error for symbol {symbol}: {symbol_db_error}")
+
             db.commit()
-            print("Symbols appended to covered_symbols.json")
+            # print("Symbols batch committed to database")
+
+            if chunk_processed:
+                await update_nse_bse_newly_listed_stock_save_processed_symbol(
+                    chunk_processed, "processed_symbols", file_name
+                )
+            if chunk_errors:
+                await update_nse_bse_newly_listed_stock_save_processed_symbol(
+                    chunk_errors, "error", file_name
+                )
+
     except Exception as e:
         db.rollback()
         raise
     finally:
         db.close()
-        await update_nse_bse_newly_listed_stock_save_processed_symbol(processed_symbols,
-                                                                      "processed_symbols", file_name)
-        await update_nse_bse_newly_listed_stock_save_processed_symbol(error_symbols,
-                                                                      "error", file_name)
+        await update_nse_bse_newly_listed_stock_save_processed_symbol(
+            processed_symbols, "processed_symbols", file_name
+        )
+        await update_nse_bse_newly_listed_stock_save_processed_symbol(
+            error_symbols, "error", file_name
+        )
+        try:
+            from app.db.redis.redis import redis_client_1
+            redis_client_1.delete(f"{file_name}:current_processed_symbols")
+        except Exception:
+            pass
 
 
 async def fetch_and_update_stock_shareholding_pattern_data_async():
