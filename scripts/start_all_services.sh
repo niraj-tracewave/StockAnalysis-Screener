@@ -5,9 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [ -f "$PROJECT_ROOT/.env" ]; then
-  set -a
-  source "$PROJECT_ROOT/.env"
-  set +a
+  VAL=$(grep -E '^OBJC_DISABLE_INITIALIZE_FORK_SAFETY=' "$PROJECT_ROOT/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"'\'' ' || true)
+  if [ -n "$VAL" ]; then
+    export OBJC_DISABLE_INITIALIZE_FORK_SAFETY="$VAL"
+  fi
 fi
 
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY="${OBJC_DISABLE_INITIALIZE_FORK_SAFETY:-YES}"
